@@ -52,7 +52,6 @@ from app.utils.credentials import (
     UUID_PROTOCOLS,
     PASSWORD_PROTOCOLS,
 )
-from app.models.proxy import ProxyTypes
 from app.models.node import GeoMode, NodeCreate, NodeModify, NodeStatus, NodeUsageResponse
 from app.models.proxy import ProxyHost as ProxyHostModify, ProxySettings
 from xray_api.types.account import XTLSFlows
@@ -1070,7 +1069,7 @@ def _ensure_admin_service_link(db: Session, admin: Optional[Admin], service: Ser
     _service_repo(db).ensure_admin_service_link(admin, service)
 
 
-def refresh_service_users(db: Session, service_id: int) -> List[User]:
+def refresh_service_users_by_id(db: Session, service_id: int) -> List[User]:
     """
     Reapply the service definition to all users belonging to it, regenerating proxies.
     """
@@ -4082,7 +4081,6 @@ def get_admin_usages_by_day(
     if granularity not in {"day", "hour"}:
         granularity = "day"
 
-    align_unit = "hour" if granularity == "hour" else "day"
     step = timedelta(hours=1) if granularity == "hour" else timedelta(days=1)
     fmt = "%Y-%m-%d %H:00" if granularity == "hour" else "%Y-%m-%d"
 

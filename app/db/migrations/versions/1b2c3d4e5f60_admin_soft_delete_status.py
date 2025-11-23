@@ -70,15 +70,29 @@ def upgrade() -> None:
                 index_to_drop = name
                 break
         if index_to_drop:
-            op.drop_index(index_to_drop, table_name="admins")
+            try:
+                op.drop_index(index_to_drop, table_name="admins")
+            except Exception:
+                pass
             existing_indexes.pop(index_to_drop, None)
 
-        refreshed_indexes = {idx["name"]: idx for idx in sa.inspect(bind).get_indexes("admins")}
+        inspector = sa.inspect(bind)
+        refreshed_indexes = {idx["name"]: idx for idx in inspector.get_indexes("admins")}
 
         if "ix_admins_username" not in refreshed_indexes:
-            op.create_index("ix_admins_username", "admins", ["username"], unique=False)
+            try:
+                op.create_index("ix_admins_username", "admins", ["username"], unique=False)
+            except Exception as e:
+                error_msg = str(e).lower()
+                if 'duplicate' not in error_msg and 'already exists' not in error_msg:
+                    raise
         if "ix_admins_status" not in refreshed_indexes:
-            op.create_index("ix_admins_status", "admins", ["status"], unique=False)
+            try:
+                op.create_index("ix_admins_status", "admins", ["status"], unique=False)
+            except Exception as e:
+                error_msg = str(e).lower()
+                if 'duplicate' not in error_msg and 'already exists' not in error_msg:
+                    raise
 
     if needs_status_column:
         op.execute("UPDATE admins SET status = 'active' WHERE status IS NULL")
@@ -106,9 +120,17 @@ def downgrade() -> None:
         inspector = sa.inspect(bind)
         existing_indexes = {idx["name"]: idx for idx in inspector.get_indexes("admins")}
         if "ix_admins_status" in existing_indexes:
-            op.drop_index("ix_admins_status", table_name="admins")
+            try:
+                op.drop_index("ix_admins_status", table_name="admins")
+            except Exception:
+                # Index might not exist, continue
+                pass
         if "ix_admins_username" in existing_indexes:
-            op.drop_index("ix_admins_username", table_name="admins")
+            try:
+                op.drop_index("ix_admins_username", table_name="admins")
+            except Exception:
+                # Index might not exist, continue
+                pass
         with op.batch_alter_table("admins") as batch_op:
             batch_op.drop_column("status")
         # Recreate a unique username index if it does not already exist
@@ -118,6 +140,13 @@ def downgrade() -> None:
             idx.get("column_names") == ["username"] and idx.get("unique")
             for idx in existing_indexes.values()
         ):
-            op.create_index("ix_admins_username", "admins", ["username"], unique=True)
+            try:
+                op.create_index("ix_admins_username", "admins", ["username"], unique=True)
+            except Exception as e:
+                # Index might already exist, check if it's a duplicate key error
+                error_msg = str(e).lower()
+                if 'duplicate' not in error_msg and 'already exists' not in error_msg:
+                    # Re-raise if it's a different error
+                    raise
 
     ADMIN_STATUS_ENUM.drop(bind, checkfirst=True)

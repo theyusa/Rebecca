@@ -2,7 +2,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from operator import attrgetter
-from typing import Union
+from typing import Dict, Optional, Tuple, Union
 
 from pymysql.err import OperationalError
 from sqlalchemy import and_, bindparam, func, insert, select, update

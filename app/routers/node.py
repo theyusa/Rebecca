@@ -2,6 +2,8 @@ import asyncio
 import time
 from typing import List, Union
 
+import requests
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, WebSocket, Body
 from sqlalchemy.exc import IntegrityError
 from starlette.websockets import WebSocketDisconnect

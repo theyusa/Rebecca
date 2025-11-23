@@ -455,7 +455,7 @@ def perform_users_bulk_action(
                     service_id=payload.service_id,
                 )
             if destination_service.id is not None:
-                crud.refresh_service_users(db, destination_service.id)
+                crud.refresh_service_users_by_id(db, destination_service.id)
             detail = "Users moved to target service"
     except UsersLimitReachedError as exc:
         report.admin_users_limit_reached(admin, exc.limit, exc.current_active)

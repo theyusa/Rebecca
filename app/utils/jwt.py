@@ -99,7 +99,7 @@ def get_subscription_payload(token: str) -> Union[dict, None]:
                     (u_token.encode('utf-8') + b'=' * (-len(u_token.encode('utf-8')) % 4)),
                     altchars=b'-_', validate=True)
                 u_token_dec_str = u_token_dec.decode('utf-8')
-            except:
+            except Exception:
                 return
             u_token_resign = b64encode(sha256((u_token+get_subscription_secret_key()).encode('utf-8')
                                               ).digest(), altchars=b'-_').decode('utf-8')[:10]

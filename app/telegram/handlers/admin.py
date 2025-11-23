@@ -2100,7 +2100,7 @@ def confirm_user_command(call: types.CallbackQuery):
                         user = crud.update_user(db, user, UserModify(inbounds=new_inbounds, proxies=proxies))
                         if user.status == UserStatus.active:
                             xray.operations.update_user(user)
-                    except:
+                    except Exception:
                         db.rollback()
                         unsuccessful += 1
 

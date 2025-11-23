@@ -25,8 +25,16 @@ def upgrade() -> None:
     if bind.engine.name == 'mysql':
         # MySQL is case-insensitive by default, no action needed
         # But we need to ensure the index exists
+        # Refresh inspector to get current state
+        inspector = sa.inspect(bind)
+        existing_indexes = {index['name'] for index in inspector.get_indexes('users')}
         if 'ix_users_username' not in existing_indexes:
-            op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
+            try:
+                op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
+            except Exception as e:
+                error_msg = str(e).lower()
+                if 'duplicate' not in error_msg and 'already exists' not in error_msg:
+                    raise
         return
 
     elif bind.engine.name == 'sqlite':
@@ -36,11 +44,25 @@ def upgrade() -> None:
         if table_sql and 'COLLATE NOCASE' in table_sql.upper():
             # Index might already exist, check and create if needed
             if 'ix_users_username' not in existing_indexes:
-                op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
+                try:
+                    op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
+                except Exception as e:
+                    # Index might already exist, check if it's a duplicate key error
+                    error_msg = str(e).lower()
+                    if 'duplicate' not in error_msg and 'already exists' not in error_msg:
+                        # Re-raise if it's a different error
+                        raise
             return
 
         if 'ix_users_username' in existing_indexes:
-            op.drop_index('ix_users_username', table_name='users')
+            try:
+                op.drop_index('ix_users_username', table_name='users')
+            except Exception:
+                # Index might not exist, continue
+                pass
+            # Refresh inspector after drop
+            inspector = sa.inspect(bind)
+            existing_indexes = {index['name'] for index in inspector.get_indexes('users')}
 
         # Define the 'users' table for SQLAlchemy Core operations
         users_table = sa.Table(
@@ -79,12 +101,29 @@ def upgrade() -> None:
         with op.batch_alter_table('users') as batch_op:
             batch_op.alter_column('username', type_=sa.String(length=34, collation='NOCASE'))
 
-        # Recreate the unique index
-        op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
+        # Recreate the unique index (check if it doesn't exist)
+        inspector = sa.inspect(bind)
+        existing_indexes = {index['name'] for index in inspector.get_indexes('users')}
+        if 'ix_users_username' not in existing_indexes:
+            try:
+                op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
+            except Exception as e:
+                # Index might already exist, check if it's a duplicate key error
+                error_msg = str(e).lower()
+                if 'duplicate' not in error_msg and 'already exists' not in error_msg:
+                    # Re-raise if it's a different error
+                    raise
     else:
         # For other databases (PostgreSQL, etc.), check if index exists before creating
         if 'ix_users_username' not in existing_indexes:
-            op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
+            try:
+                op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
+            except Exception as e:
+                # Index might already exist, check if it's a duplicate key error
+                error_msg = str(e).lower()
+                if 'duplicate' not in error_msg and 'already exists' not in error_msg:
+                    # Re-raise if it's a different error
+                    raise
 
 
 def downgrade() -> None:
@@ -106,13 +145,31 @@ def downgrade() -> None:
             batch_op.alter_column('username', type_=sa.String(length=34))
 
         if 'ix_users_username' in existing_indexes:
-            op.drop_index('ix_users_username', table_name='users')
+            try:
+                op.drop_index('ix_users_username', table_name='users')
+            except Exception:
+                # Index might not exist, continue
+                pass
         # Refresh inspector after drop
         inspector = sa.inspect(bind)
         existing_indexes = {index['name'] for index in inspector.get_indexes('users')}
         if 'ix_users_username' not in existing_indexes:
-            op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
+            try:
+                op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
+            except Exception as e:
+                # Index might already exist, check if it's a duplicate key error
+                error_msg = str(e).lower()
+                if 'duplicate' not in error_msg and 'already exists' not in error_msg:
+                    # Re-raise if it's a different error
+                    raise
     else:
         # For other databases, ensure index exists
         if 'ix_users_username' not in existing_indexes:
-            op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
+            try:
+                op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
+            except Exception as e:
+                # Index might already exist, check if it's a duplicate key error
+                error_msg = str(e).lower()
+                if 'duplicate' not in error_msg and 'already exists' not in error_msg:
+                    # Re-raise if it's a different error
+                    raise

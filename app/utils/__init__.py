@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from config import XRAY_HOSTS
+from app.xray import INBOUND_PORTS
 
 
 @dataclass
@@ -112,7 +113,7 @@ def shadowsocks_link(remark: str,
 
 
 def get_share_link(remark: str, host: str, protocol: str, settings: dict):
-    from app.xray import INBOUND_PORTS, INBOUND_STREAMS
+    from app.xray import INBOUND_STREAMS
 
     if protocol == 'vmess':
         return vmess_link(remark=remark,
@@ -151,7 +152,7 @@ def get_share_link(remark: str, host: str, protocol: str, settings: dict):
 
 
 def get_share_links(protocol: str, settings: str):
-    from app.xray import INBOUND_PORTS, INBOUND_STREAMS
+    from app.xray import INBOUND_STREAMS
 
     links = []
     for host in XRAY_HOSTS:

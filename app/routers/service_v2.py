@@ -11,7 +11,7 @@ from app.db import GetDB, crud, get_db
 from app.utils.concurrency import threaded_function
 from app.db.models import Service, User
 from app.dependencies import validate_dates
-from app.models.admin import Admin, AdminRole
+from app.models.admin import Admin, AdminRole, UserPermission
 from app.models.service import (
     ServiceAdmin,
     ServiceBase,
