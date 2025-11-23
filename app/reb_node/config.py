@@ -414,19 +414,8 @@ class XRayConfig(dict):
                 elif net == 'ws':
                     path = net_settings.get('path', '')
                     # Use host field directly (migration from headers.Host should be done in _migrate_deprecated_configs)
-                    host = net_settings.get('host', '')
-                    # Only fallback to headers.Host if host is not set (for backward compatibility)
-                    if not host:
-                        headers = net_settings.get('headers', {})
-                        if headers and 'Host' in headers:
-                            host = headers['Host']
-                            # Migrate to host field
-                            net_settings['host'] = host
-                            # Remove from headers
-                            if 'Host' in headers:
-                                del headers['Host']
-                            if not headers:
-                                net_settings.pop('headers', None)
+                    # Fallback to headers.Host only if host is not set (for backward compatibility during transition)
+                    host = net_settings.get('host', '') or net_settings.get('headers', {}).get('Host')
 
                     settings['header_type'] = ''
 
@@ -623,7 +612,20 @@ class XRayConfig(dict):
                                 client_to_add = None
                         
                         if client_to_add:
-                            client_to_add.pop('flow', None)
+                            # XTLS currently only supports transmission methods of TCP and mKCP
+                            if client_to_add.get('flow') and (
+                                    inbound.get('network', 'tcp') not in ('tcp', 'raw', 'kcp')
+                                    or
+                                    (
+                                        inbound.get('network', 'tcp') in ('tcp', 'raw', 'kcp')
+                                        and
+                                        inbound.get('tls') not in ('tls', 'reality')
+                                    )
+                                    or
+                                    inbound.get('header_type') == 'http'
+                            ):
+                                del client_to_add['flow']
+                            
                             clients.append(client_to_add)
                         else:
                             # If no client was added, this is an error case

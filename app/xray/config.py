@@ -13,12 +13,30 @@ class XRayConfig(dict):
                 config = json.loads(config)
             except json.JSONDecodeError:
                 # considering string as file path
-                with open(config, 'r') as file:
-                    config = json.loads(file.read())
+                try:
+                    with open(config, 'r') as file:
+                        content = file.read().strip()
+                        if not content:
+                            # Empty file, use empty dict
+                            config = {}
+                        else:
+                            config = json.loads(content)
+                except (FileNotFoundError, json.JSONDecodeError, OSError):
+                    # File doesn't exist or invalid JSON, use empty dict
+                    config = {}
 
         if isinstance(config, PosixPath):
-            with open(config, 'r') as file:
-                config = json.loads(file.read())
+            try:
+                with open(config, 'r') as file:
+                    content = file.read().strip()
+                    if not content:
+                        # Empty file, use empty dict
+                        config = {}
+                    else:
+                        config = json.loads(content)
+            except (FileNotFoundError, json.JSONDecodeError, OSError):
+                # File doesn't exist or invalid JSON, use empty dict
+                config = {}
 
         self.api_host = api_host
         self.api_port = api_port

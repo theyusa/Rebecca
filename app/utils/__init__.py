@@ -46,7 +46,8 @@ def vmess_link(remark: str,
                sni='',
                tls=False,
                type=''):
-    from app.xray import INBOUND_PORTS
+    from app.runtime import xray
+    INBOUND_PORTS = {inbound['protocol']: inbound['port'] for inbound in xray.config.get('inbounds', []) if inbound.get('protocol')} if xray and xray.config else {}
     return "vmess://" + base64.b64encode(json.dumps({
         'add': address,
         'aid': '0',
@@ -72,7 +73,8 @@ def vless_link(remark: str,
                tls=False,
                host='',
                sni=''):
-    from app.xray import INBOUND_PORTS
+    from app.runtime import xray
+    INBOUND_PORTS = {inbound['protocol']: inbound['port'] for inbound in xray.config.get('inbounds', []) if inbound.get('protocol')} if xray and xray.config else {}
     return "vless://" + \
         f"{id}@{address}:{INBOUND_PORTS['vless']}?" + \
         urlparse.urlencode({
@@ -93,7 +95,8 @@ def trojan_link(remark: str,
                 tls=False,
                 host='',
                 sni=''):
-    from app.xray import INBOUND_PORTS
+    from app.runtime import xray
+    INBOUND_PORTS = {inbound['protocol']: inbound['port'] for inbound in xray.config.get('inbounds', []) if inbound.get('protocol')} if xray and xray.config else {}
     return "trojan://" + \
         f"{urlparse.quote(password, safe=':')}@{address}:{INBOUND_PORTS['trojan']}?" + \
         urlparse.urlencode({
@@ -109,14 +112,36 @@ def shadowsocks_link(remark: str,
                      address: str,
                      password: str,
                      security='chacha20-ietf-poly1305'):
-    from app.xray import INBOUND_PORTS
+    from app.runtime import xray
+    INBOUND_PORTS = {inbound['protocol']: inbound['port'] for inbound in xray.config.get('inbounds', []) if inbound.get('protocol')} if xray and xray.config else {}
     return "ss://" + \
         base64.b64encode(f'{security}:{password}'.encode()).decode() + \
         f"@{address}:{INBOUND_PORTS['shadowsocks']}#{urlparse.quote(remark)}"
 
 
 def get_share_link(remark: str, host: str, protocol: str, settings: dict):
-    from app.xray import INBOUND_STREAMS
+    from app.runtime import xray
+    # Build INBOUND_STREAMS from xray config
+    INBOUND_STREAMS = {}
+    if xray and xray.config and xray.config.get('inbounds'):
+        for inbound in xray.config['inbounds']:
+            if inbound.get('protocol'):
+                INBOUND_STREAMS[inbound['protocol']] = {
+                    "net": inbound['streamSettings'].get('network', 'tcp') if inbound.get('streamSettings') else 'tcp',
+                    "tls": inbound['streamSettings'].get('security') in ('tls', 'xtls') if inbound.get('streamSettings') else False,
+                    "sni": (
+                        (inbound['streamSettings'].get('tlsSettings') or
+                         inbound['streamSettings'].get('xtlsSettings') or
+                         {}).get('serverName', '')
+                        if inbound.get('streamSettings') else ''
+                    ),
+                    "path": (
+                        inbound['streamSettings'].get(
+                            f"{inbound['streamSettings'].get('network', 'tcp')}Settings", {}
+                        ).get('path', '')
+                        if inbound.get('streamSettings') else ''
+                    )
+                }
 
     if protocol == 'vmess':
         return vmess_link(remark=remark,

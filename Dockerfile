@@ -30,8 +30,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:$PYTHON_VERSION-slim-bookworm
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    unzip \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /build /code
 COPY --from=builder /usr/local/share/xray /usr/local/share/xray
+COPY --from=builder /usr/local/bin/xray /usr/local/bin/xray
 
 WORKDIR /code
 

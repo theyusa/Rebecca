@@ -11,17 +11,26 @@ from xray_api import types
 from config import XRAY_ASSETS_PATH, XRAY_EXECUTABLE_PATH, XRAY_JSON
 
 # Search for a free API port from 8080
+api_port = 8080  # Default port
 try:
-    for api_port in range(8080, 65536):
-        if not check_port(api_port):
+    for port in range(8080, 65536):
+        if not check_port(port):
+            api_port = port
             break
-finally:
-    config = XRayConfig(XRAY_JSON, api_port=api_port)
-    del api_port
+except Exception:
+    # If port checking fails, use default
+    api_port = 8080
 
+try:
+    config = XRayConfig(XRAY_JSON, api_port=api_port)
+except Exception:
+    # If config loading fails, create empty config
+    config = XRayConfig({}, api_port=api_port)
 
 core = XRayCore(XRAY_EXECUTABLE_PATH, XRAY_ASSETS_PATH)
-core.start(config)
+
+# Don't start core automatically - let runtime handle it
+# core.start(config)
 
 
 @atexit.register
@@ -32,30 +41,35 @@ def stop_core():
 
 api = XRay(config.api_host, config.api_port)
 
+# Initialize INBOUND constants safely
+INBOUND_PORTS = {}
+INBOUND_TAGS = {}
+INBOUND_STREAMS = {}
 
-INBOUND_PORTS = {inbound['protocol']: inbound['port'] for inbound in config['inbounds']}
-INBOUND_TAGS = {inbound['protocol']: inbound['tag'] for inbound in config['inbounds']}
-INBOUND_STREAMS = {inbound['protocol']: (
-                   {
-                       "net": inbound['streamSettings'].get('network', 'tcp'),
-                       "tls": inbound['streamSettings'].get('security') in ('tls', 'xtls'),
-                       "sni": (
-                           inbound['streamSettings'].get('tlsSettings') or
-                           inbound['streamSettings'].get('xtlsSettings') or
-                           {}
-                       ).get('serverName', ''),
-                       "path": inbound['streamSettings'].get(
-                           f"{inbound['streamSettings'].get('network', 'tcp')}Settings", {}
-                       ).get('path', '')
-                   }
-                   if inbound.get('streamSettings') else
-                   {
-                       "net": "tcp",
-                       "tls": False,
-                       "sni": "",
-                       "path": ""
-                   }
-                   ) for inbound in config['inbounds']}
+if config.get('inbounds'):
+    INBOUND_PORTS = {inbound['protocol']: inbound['port'] for inbound in config['inbounds'] if inbound.get('protocol')}
+    INBOUND_TAGS = {inbound['protocol']: inbound['tag'] for inbound in config['inbounds'] if inbound.get('protocol')}
+    INBOUND_STREAMS = {inbound['protocol']: (
+                       {
+                           "net": inbound['streamSettings'].get('network', 'tcp'),
+                           "tls": inbound['streamSettings'].get('security') in ('tls', 'xtls'),
+                           "sni": (
+                               inbound['streamSettings'].get('tlsSettings') or
+                               inbound['streamSettings'].get('xtlsSettings') or
+                               {}
+                           ).get('serverName', ''),
+                           "path": inbound['streamSettings'].get(
+                               f"{inbound['streamSettings'].get('network', 'tcp')}Settings", {}
+                           ).get('path', '')
+                       }
+                       if inbound.get('streamSettings') else
+                       {
+                           "net": "tcp",
+                           "tls": False,
+                           "sni": "",
+                           "path": ""
+                       }
+                       ) for inbound in config['inbounds'] if inbound.get('protocol')}
 
 
 __all__ = [

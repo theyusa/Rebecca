@@ -2,7 +2,6 @@ import sqlalchemy
 from app import xray
 from app.db import get_users, get_db, engine, User
 from app.models.user import UserResponse, UserStatus
-from app.xray import INBOUND_TAGS
 from app.utils.credentials import runtime_proxy_settings, UUID_PROTOCOLS
 from app.runtime import logger
 
