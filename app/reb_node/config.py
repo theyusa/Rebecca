@@ -130,6 +130,9 @@ class XRayConfig(dict):
 
         super().__init__(config)
         self._validate()
+        
+        # Migrate deprecated configs before processing
+        self._migrate_deprecated_configs()
 
         self.inbounds = []
         self.inbounds_by_protocol = {}
@@ -211,6 +214,59 @@ class XRayConfig(dict):
         except KeyError:
             self["routing"] = {"rules": []}
             self["routing"]["rules"].insert(0, rule)
+
+    def _migrate_deprecated_configs(self):
+        """Migrate deprecated config formats to new formats to avoid deprecation warnings."""
+        def migrate_stream_settings(stream):
+            """Helper function to migrate stream settings for both inbound and outbound."""
+            if not stream:
+                return
+            
+            # Migrate WebSocket transport: move host from headers.Host to host
+            if stream.get("network") == "ws":
+                ws_settings = stream.get("wsSettings", {})
+                if ws_settings:
+                    # Check if host is in headers (deprecated)
+                    headers = ws_settings.get("headers", {})
+                    if headers and "Host" in headers:
+                        # Migrate host from headers to host field if host is not already set
+                        if not ws_settings.get("host"):
+                            ws_settings["host"] = headers["Host"]
+                        # Remove Host from headers if it exists
+                        if "Host" in headers:
+                            del headers["Host"]
+                        # Clean up empty headers dict
+                        if not headers:
+                            ws_settings.pop("headers", None)
+            
+            # Migrate TCP transport: move host from headers.Host to host (if applicable)
+            elif stream.get("network") in ("tcp", "raw"):
+                tcp_settings = stream.get("tcpSettings", {})
+                if tcp_settings:
+                    header = tcp_settings.get("header", {})
+                    if header and header.get("type") == "http":
+                        request = header.get("request", {})
+                        if request:
+                            req_headers = request.get("headers", {})
+                            if req_headers and "Host" in req_headers:
+                                # For TCP, host should be in request.headers.Host as a list
+                                # But we should ensure it's properly formatted
+                                host_value = req_headers["Host"]
+                                if isinstance(host_value, str):
+                                    # Convert string to list if needed
+                                    req_headers["Host"] = [host_value]
+        
+        # Migrate inbounds
+        if "inbounds" in self:
+            for inbound in self["inbounds"]:
+                stream = inbound.get("streamSettings", {})
+                migrate_stream_settings(stream)
+        
+        # Migrate outbounds
+        if "outbounds" in self:
+            for outbound in self["outbounds"]:
+                stream = outbound.get("streamSettings", {})
+                migrate_stream_settings(stream)
 
     def _validate(self):
         if not self.get("inbounds"):
@@ -357,7 +413,20 @@ class XRayConfig(dict):
 
                 elif net == 'ws':
                     path = net_settings.get('path', '')
-                    host = net_settings.get('host', '') or net_settings.get('headers', {}).get('Host')
+                    # Use host field directly (migration from headers.Host should be done in _migrate_deprecated_configs)
+                    host = net_settings.get('host', '')
+                    # Only fallback to headers.Host if host is not set (for backward compatibility)
+                    if not host:
+                        headers = net_settings.get('headers', {})
+                        if headers and 'Host' in headers:
+                            host = headers['Host']
+                            # Migrate to host field
+                            net_settings['host'] = host
+                            # Remove from headers
+                            if 'Host' in headers:
+                                del headers['Host']
+                            if not headers:
+                                net_settings.pop('headers', None)
 
                     settings['header_type'] = ''
 
@@ -443,6 +512,9 @@ class XRayConfig(dict):
                 return outbound
 
     def to_json(self, **json_kwargs):
+        # Ensure migration is applied before converting to JSON
+        # This is important because config might be modified after initialization
+        self._migrate_deprecated_configs()
         return json.dumps(self, **json_kwargs)
 
     def copy(self):
@@ -450,6 +522,8 @@ class XRayConfig(dict):
 
     def include_db_users(self) -> XRayConfig:
         config = self.copy()
+        # Ensure migration is applied to the copied config before adding users
+        config._migrate_deprecated_configs()
 
         with GetDB() as db:
             query = db.query(

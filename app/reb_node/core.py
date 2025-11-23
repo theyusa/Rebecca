@@ -71,14 +71,13 @@ class XRayCore:
                 output = self.process.stdout.readline()
                 if output:
                     output = output.strip()
-                    self._logs_buffer.append(output)
-                    for buf in list(self._temp_log_buffers.values()):
-                        buf.append(output)
-                    logger.debug(output)
-                    # Log errors and warnings at appropriate levels
-                    output_lower = output.lower()
-                    if any(keyword in output_lower for keyword in ['error', 'failed', 'rejected', 'bad request', '400', 'handshake', 'invalid']):
-                        logger.warning(f"Xray: {output}")
+                    if output:  # Only add non-empty logs
+                        self._logs_buffer.append(output)
+                        for buf in list(self._temp_log_buffers.values()):
+                            buf.append(output)
+                        # Only log to terminal in DEBUG mode
+                        if DEBUG:
+                            logger.debug(output)
 
                 elif not self.process or self.process.poll() is not None:
                     break
@@ -88,13 +87,11 @@ class XRayCore:
                 output = self.process.stdout.readline()
                 if output:
                     output = output.strip()
-                    self._logs_buffer.append(output)
-                    for buf in list(self._temp_log_buffers.values()):
-                        buf.append(output)
-                    # Log errors and warnings even in non-debug mode
-                    output_lower = output.lower()
-                    if any(keyword in output_lower for keyword in ['error', 'failed', 'rejected', 'bad request', '400', 'handshake', 'invalid']):
-                        logger.warning(f"Xray: {output}")
+                    if output:  # Only add non-empty logs
+                        self._logs_buffer.append(output)
+                        for buf in list(self._temp_log_buffers.values()):
+                            buf.append(output)
+                        # Don't log to terminal - logs will be sent via WebSocket
 
                 elif not self.process or self.process.poll() is not None:
                     break
@@ -106,15 +103,13 @@ class XRayCore:
                     output = self.process.stderr.readline()
                     if output:
                         output = output.strip()
-                        self._logs_buffer.append(output)
-                        for buf in list(self._temp_log_buffers.values()):
-                            buf.append(output)
-                        # Always log stderr as it usually contains errors
-                        output_lower = output.lower()
-                        if any(keyword in output_lower for keyword in ['error', 'failed', 'rejected', 'bad request', '400', 'handshake', 'invalid', 'connection']):
-                            logger.warning(f"Xray stderr: {output}")
-                        elif DEBUG:
-                            logger.debug(f"Xray stderr: {output}")
+                        if output:  # Only add non-empty logs
+                            self._logs_buffer.append(output)
+                            for buf in list(self._temp_log_buffers.values()):
+                                buf.append(output)
+                            # Only log to terminal in DEBUG mode
+                            if DEBUG:
+                                logger.debug(f"Xray stderr: {output}")
                     elif not self.process or self.process.poll() is not None:
                         break
                 except Exception:
@@ -153,6 +148,11 @@ class XRayCore:
             r'critical',
             r'core.*stopped',
             r'core.*exit',
+            r'rejected',
+            r'bad request',
+            r'400',
+            r'handshake.*fail',
+            r'invalid',
         ]
         
         # Check logs in reverse order (most recent first)
@@ -181,8 +181,15 @@ class XRayCore:
         if self.started is True:
             raise RuntimeError("Xray is started already")
 
-        if config.get("log", {}).get("logLevel") in ("none", "error"):
-            config["log"]["logLevel"] = "warning"
+        # Enable access log to see all connection attempts (including failed ones)
+        # Access log helps diagnose connection issues
+        # Note: logLevel should be set in Xray config, not here
+        log_config = config.get("log", {})
+        if "access" not in log_config:
+            log_config["access"] = ""  # Empty string means log to stdout
+        elif log_config.get("access") is None:
+            log_config["access"] = ""  # Enable if disabled
+        config["log"] = log_config
 
         cmd = [self.executable_path, "run", "-config", "stdin:"]
         self.process = subprocess.Popen(

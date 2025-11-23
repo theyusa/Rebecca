@@ -29,8 +29,13 @@ class XRayCore:
         if self.started is True:
             raise RuntimeError("Xray is started already")
 
-        if config.get('log', {}).get('logLevel') in ('none', 'error'):
-            config['log']['logLevel'] = 'warning'
+        # Note: logLevel should be set in Xray config, not modified here
+        # Only ensure minimum log level if it's set to 'none' or 'error' to avoid missing critical logs
+        log_config = config.get('log', {})
+        if log_config.get('logLevel') in ('none', 'error'):
+            # Only set minimum level if it's too restrictive, otherwise respect config
+            log_config['logLevel'] = 'warning'
+            config['log'] = log_config
 
         cmd = [
             self.executable_path,
