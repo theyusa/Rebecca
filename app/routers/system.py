@@ -414,6 +414,8 @@ def create_inbound(
     apply_config_and_restart(config)
 
     crud.get_or_create_inbound(db, tag)
+    # Ensure hosts cache is updated after inbound is created
+    xray.hosts.update()
     return _sanitize_inbound(inbound)
 
 
@@ -437,6 +439,8 @@ def update_inbound(
     apply_config_and_restart(config)
 
     crud.get_or_create_inbound(db, tag)
+    # Ensure hosts cache is updated after inbound is updated
+    xray.hosts.update()
     return _sanitize_inbound(inbound)
 
 

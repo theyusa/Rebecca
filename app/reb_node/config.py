@@ -23,6 +23,7 @@ from app.models.proxy import ProxyTypes, ProxySettings
 from app.models.user import UserStatus
 from app.utils.crypto import get_cert_SANs
 from app.utils.credentials import runtime_proxy_settings, UUID_PROTOCOLS
+from app.utils.xray_defaults import apply_log_paths
 from config import (
     DEBUG,
     XRAY_EXECUTABLE_PATH,
@@ -154,6 +155,10 @@ class XRayConfig(dict):
 
         if isinstance(config, dict):
             config = deepcopy(config)
+        else:
+            config = {}
+
+        config = apply_log_paths(config)
 
         self.api_host = api_host
         self.api_port = api_port

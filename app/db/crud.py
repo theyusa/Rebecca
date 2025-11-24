@@ -43,7 +43,7 @@ from app.db.models import (
 )
 from app.models.admin import AdminRole, AdminStatus
 from app.models.admin import AdminCreate, AdminModify, AdminPartialModify, ROLE_DEFAULT_PERMISSIONS
-from app.utils.xray_defaults import load_legacy_xray_config
+from app.utils.xray_defaults import apply_log_paths, load_legacy_xray_config
 from app.utils.credentials import (
     generate_key,
     key_to_uuid,
@@ -121,7 +121,7 @@ def _get_or_create_xray_config(db: Session) -> XrayConfig:
 
     config = db.get(XrayConfig, 1)
     if config is None:
-        config = XrayConfig(id=1, data=load_legacy_xray_config())
+        config = XrayConfig(id=1, data=apply_log_paths(load_legacy_xray_config()))
         db.add(config)
         db.commit()
         db.refresh(config)
@@ -130,15 +130,16 @@ def _get_or_create_xray_config(db: Session) -> XrayConfig:
 
 def get_xray_config(db: Session) -> Dict[str, Any]:
     if not _xray_config_table_exists(db):
-        return deepcopy(load_legacy_xray_config())
+        return apply_log_paths(load_legacy_xray_config())
 
     config = _get_or_create_xray_config(db)
-    return deepcopy(config.data or {})
+    return apply_log_paths(config.data or {})
 
 
 def save_xray_config(db: Session, payload: Dict[str, Any]) -> Dict[str, Any]:
+    normalized_payload = apply_log_paths(payload or {})
     config = _get_or_create_xray_config(db)
-    config.data = deepcopy(payload or {})
+    config.data = deepcopy(normalized_payload or {})
     db.add(config)
     db.commit()
     db.refresh(config)

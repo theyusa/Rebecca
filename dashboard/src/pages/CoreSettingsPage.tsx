@@ -122,6 +122,10 @@ const SERVICES_OPTIONS: { label: string; value: string }[] = [
   { label: "Speedtest", value: "geosite:speedtest" },
 ];
 
+const XRAY_LOG_DIR = "/var/lib/rebecca/xray-core";
+const DEFAULT_ACCESS_LOG_PATH = `${XRAY_LOG_DIR}/access.log`;
+const DEFAULT_ERROR_LOG_PATH = `${XRAY_LOG_DIR}/error.log`;
+
 type OutboundJson = Record<string, any>;
 
 const SettingsSection: FC<{ title: string; children: ReactNode }> = ({ title, children }) => {
@@ -1413,7 +1417,7 @@ export const CoreSettingsPage: FC = () => {
                       render={({ field }) => (
                         <Select {...field} id={id} size="sm" maxW="220px">
                           <option value="">Empty</option>
-                          {["none", "./access.log"].map((s) => (
+                          {["none", DEFAULT_ACCESS_LOG_PATH].map((s) => (
                             <option key={s} value={s}>{s}</option>
                           ))}
                         </Select>
@@ -1429,7 +1433,7 @@ export const CoreSettingsPage: FC = () => {
                       render={({ field }) => (
                         <Select {...field} id={id} size="sm" maxW="220px">
                           <option value="">Empty</option>
-                          {["none", "./error.log"].map((s) => (
+                          {["none", DEFAULT_ERROR_LOG_PATH].map((s) => (
                             <option key={s} value={s}>{s}</option>
                           ))}
                         </Select>

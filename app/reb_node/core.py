@@ -4,6 +4,7 @@ import subprocess
 import threading
 from collections import deque
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Optional
 
 import logging
@@ -228,11 +229,20 @@ class XRayCore:
         # Enable access log to see all connection attempts (including failed ones)
         # Access log helps diagnose connection issues
         # Note: logLevel should be set in Xray config, not here
-        log_config = config.get("log", {})
+        log_config = config.get("log", {}) if isinstance(config.get("log", {}), dict) else {}
         if "access" not in log_config:
             log_config["access"] = ""  # Empty string means log to stdout
         elif log_config.get("access") is None:
             log_config["access"] = ""  # Enable if disabled
+
+        for key in ("access", "error"):
+            log_path = log_config.get(key)
+            if log_path and isinstance(log_path, str) and log_path.lower() != "none":
+                try:
+                    Path(log_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+                except Exception:
+                    pass
+
         config["log"] = log_config
 
         cmd = [self.executable_path, "run", "-config", "stdin:"]
