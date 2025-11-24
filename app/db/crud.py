@@ -830,7 +830,7 @@ class ServiceRepository:
         self,
         service: Service,
         *,
-        mode: Literal["delete_users", "transfer_users"] = "delete_users",
+        mode: Literal["delete_users", "transfer_users"] = "transfer_users",
         target_service: Optional[Service] = None,
         unlink_admins: bool = False,
     ) -> Tuple[List[User], List[User]]:
@@ -846,10 +846,10 @@ class ServiceRepository:
 
         if service_users:
             if mode == "transfer_users":
-                if not target_service or target_service.id == service.id:
+                if target_service and target_service.id == service.id:
                     raise ValueError("A different target service is required for transferring users")
                 for user in service_users:
-                    user.service_id = target_service.id
+                    user.service_id = target_service.id if target_service else None
                     transferred_users.append(user)
             elif mode == "delete_users":
                 deleted_users.extend(service_users)
@@ -1148,7 +1148,7 @@ def remove_service(
     db: Session,
     service: Service,
     *,
-    mode: Literal["delete_users", "transfer_users"] = "delete_users",
+    mode: Literal["delete_users", "transfer_users"] = "transfer_users",
     target_service: Optional[Service] = None,
     unlink_admins: bool = False,
 ) -> Tuple[List[User], List[User]]:

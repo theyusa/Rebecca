@@ -57,7 +57,7 @@ export type ServiceModifyPayload = Partial<Omit<ServiceCreatePayload, "hosts">> 
 
 export type ServiceDeletePayload = {
   mode: "delete_users" | "transfer_users";
-  target_service_id?: number;
+  target_service_id?: number | null;
   unlink_admins?: boolean;
 };
 

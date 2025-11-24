@@ -446,7 +446,7 @@ class UserModify(User):
 
 class UserServiceCreate(BaseModel):
     username: str
-    service_id: int
+    service_id: Optional[int] = None
     status: UserStatusCreate | None = None
     expire: Optional[int] = None
     data_limit: Optional[int] = Field(None, ge=0)

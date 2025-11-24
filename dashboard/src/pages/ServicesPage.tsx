@@ -90,6 +90,8 @@ type ServiceDialogProps = {
   initialService?: ServiceDetail | null;
 };
 
+const NO_SERVICE_OPTION_VALUE = "__no_service__";
+
 const ServiceDialog: FC<ServiceDialogProps> = ({
   isOpen,
   onClose,
@@ -669,16 +671,10 @@ const ServicesPage: FC = () => {
     const payload: ServiceDeletePayload = {
       mode: servicePendingDelete.user_count ? deleteMode : "delete_users",
       unlink_admins: unlinkAdmins,
+      target_service_id: null,
     };
     if (payload.mode === "transfer_users") {
-      if (!targetServiceId) {
-        toast({
-          status: "error",
-          title: t("services.selectTransferTarget", "Select a target service"),
-        });
-        return;
-      }
-      payload.target_service_id = targetServiceId;
+      payload.target_service_id = targetServiceId ?? null;
     }
     setIsDeleting(true);
     try {
@@ -700,7 +696,7 @@ const ServicesPage: FC = () => {
   };
 
   const [servicePendingDelete, setServicePendingDelete] = useState<ServiceDetail | null>(null);
-  const [deleteMode, setDeleteMode] = useState<"delete_users" | "transfer_users">("delete_users");
+  const [deleteMode, setDeleteMode] = useState<"delete_users" | "transfer_users">("transfer_users");
   const [unlinkAdmins, setUnlinkAdmins] = useState(false);
   const [targetServiceId, setTargetServiceId] = useState<number | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -719,7 +715,8 @@ const ServicesPage: FC = () => {
 
   useEffect(() => {
     if (servicePendingDelete) {
-      setDeleteMode("delete_users");
+      const hasUsers = servicePendingDelete.user_count > 0;
+      setDeleteMode(hasUsers ? "transfer_users" : "delete_users");
       setUnlinkAdmins(servicePendingDelete.admin_ids.length > 0);
       setTargetServiceId(null);
     }
@@ -1186,21 +1183,16 @@ const ServicesPage: FC = () => {
                         <Radio value="delete_users">
                           {t("services.deleteUsersOption", "Delete linked users with the service")}
                         </Radio>
-                        <Radio
-                          value="transfer_users"
-                          isDisabled={otherServices.length === 0}
-                        >
-                          {otherServices.length === 0
-                            ? t(
-                                "services.transferUsersDisabled",
-                                "Transfer users (no other services available)"
-                              )
-                            : t("services.transferUsersOption", "Transfer users to another service")}
+                        <Radio value="transfer_users">
+                          {t(
+                            "services.transferUsersOption",
+                            "Keep linked users (move them to No service or another service)"
+                          )}
                         </Radio>
                       </Stack>
                     </RadioGroup>
-                    {deleteMode === "transfer_users" && otherServices.length > 0 && (
-                      <FormControl isRequired>
+                    {deleteMode === "transfer_users" && (
+                      <FormControl>
                         <FormLabel>
                           {t("services.selectTargetService", "Target service")}
                         </FormLabel>
@@ -1209,13 +1201,26 @@ const ServicesPage: FC = () => {
                             "services.selectServicePlaceholder",
                             "Select a service"
                           )}
-                          value={targetServiceId ?? ""}
-                          onChange={(event) =>
-                            setTargetServiceId(
-                              event.target.value ? Number(event.target.value) : null
-                            )
+                          value={
+                            targetServiceId === null
+                              ? NO_SERVICE_OPTION_VALUE
+                              : targetServiceId?.toString() ?? NO_SERVICE_OPTION_VALUE
                           }
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            if (!value || value === NO_SERVICE_OPTION_VALUE) {
+                              setTargetServiceId(null);
+                              return;
+                            }
+                            setTargetServiceId(Number(value));
+                          }}
                         >
+                          <option value={NO_SERVICE_OPTION_VALUE}>
+                            {t(
+                              "services.noServiceTargetOption",
+                              "Move users to No service (default)"
+                            )}
+                          </option>
                           {otherServices.map((service) => (
                             <option key={service.id} value={service.id}>
                               {service.name}
@@ -1225,7 +1230,7 @@ const ServicesPage: FC = () => {
                         <FormHelperText>
                           {t(
                             "services.transferUsersHint",
-                            "All users will be moved to the selected service."
+                            "Users will be unassigned from this service by default. Select another service if you want to move them elsewhere."
                           )}
                         </FormHelperText>
                       </FormControl>
@@ -1252,14 +1257,7 @@ const ServicesPage: FC = () => {
               colorScheme="red"
               onClick={confirmDeleteService}
               isLoading={isDeleting}
-              isDisabled={
-                Boolean(
-                  servicePendingDelete?.user_count &&
-                    deleteMode === "transfer_users" &&
-                    otherServices.length > 0 &&
-                    !targetServiceId
-                )
-              }
+              isDisabled={!servicePendingDelete}
             >
               {t("services.delete", "Delete")}
             </Button>

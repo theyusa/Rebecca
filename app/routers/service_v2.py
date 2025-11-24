@@ -241,9 +241,7 @@ def delete_service(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
 
     target_service: Optional[Service] = None
-    if payload.mode == "transfer_users":
-        if payload.target_service_id is None:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="target_service_id is required")
+    if payload.mode == "transfer_users" and payload.target_service_id is not None:
         if payload.target_service_id == service.id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Target service must be different")
         target_service = crud.get_service(db, payload.target_service_id)

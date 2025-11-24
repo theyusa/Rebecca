@@ -37,27 +37,50 @@ def add_user_with_service(
     db: Session = Depends(get_db),
     admin: Admin = Depends(Admin.require_active),
 ):
-    service = crud.get_service(db, payload.service_id)
-    if not service:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
-
-    _ensure_service_visibility(service, admin)
+    service = None
+    proxies_payload = {}
+    inbounds_payload = {}
+    
+    if payload.service_id is not None:
+        service = crud.get_service(db, payload.service_id)
+        if not service:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
+        
+        _ensure_service_visibility(service, admin)
+        
+        allowed_inbounds = crud.get_service_allowed_inbounds(service)
+        if not allowed_inbounds:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Service does not have any active hosts")
+        
+        proxies_payload = {proxy_type.value: {} for proxy_type in allowed_inbounds.keys()}
+        inbounds_payload = {
+            proxy_type.value: sorted(list(tags))
+            for proxy_type, tags in allowed_inbounds.items()
+        }
+    else:
+        if admin.role not in (AdminRole.sudo, AdminRole.full_access):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="service_id is required for your role. Only sudo and full_access admins can create users without a service."
+            )
+        available_protocols = list(xray.config.inbounds_by_protocol.keys())
+        if not available_protocols:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No active protocols available on the server"
+            )
+        proxies_payload = {proto.value: {} for proto in available_protocols}
+        inbounds_payload = {
+            proto.value: sorted([inbound["tag"] for inbound in xray.config.inbounds_by_protocol[proto]])
+            for proto in available_protocols
+        }
 
     db_admin = crud.get_admin(db, admin.username)
     if not db_admin:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin not found")
 
-    allowed_inbounds = crud.get_service_allowed_inbounds(service)
-    if not allowed_inbounds:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Service does not have any active hosts")
-
-    proxies_payload = {proxy_type.value: {} for proxy_type in allowed_inbounds.keys()}
-    inbounds_payload = {
-        proxy_type.value: sorted(list(tags))
-        for proxy_type, tags in allowed_inbounds.items()
-    }
-
     user_payload = payload.model_dump(exclude={"service_id"}, exclude_none=True)
+    
     user_payload["proxies"] = proxies_payload
     user_payload["inbounds"] = inbounds_payload
 
@@ -90,7 +113,8 @@ def add_user_with_service(
     bg.add_task(xray.operations.add_user, dbuser=dbuser)
     user = UserResponse.model_validate(dbuser)
     report.user_created(user=user, user_id=dbuser.id, by=admin, user_admin=dbuser.admin)
-    logger.info(f'New user "{dbuser.username}" added via service {service.name}')
+    service_name = service.name if service else "no service"
+    logger.info(f'New user "{dbuser.username}" added via service {service_name}')
     return user
 
 
