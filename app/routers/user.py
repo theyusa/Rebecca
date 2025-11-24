@@ -351,6 +351,33 @@ def reset_users_data_usage(
     return {"detail": "Users successfully reset."}
 
 
+@router.post("/users/fix-null-uuid", responses={403: responses._403})
+def fix_users_null_uuid_endpoint(
+    bg: BackgroundTasks,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Fix users with null UUID in proxies table by generating UUID from credential_key"""
+    admin.ensure_user_permission(UserPermission.advanced_actions)
+    
+    stats = crud.fix_users_with_null_uuid(db)
+    
+    # Restart Xray to apply changes
+    def restart_xray():
+        startup_config = xray.config.include_db_users()
+        xray.core.restart(startup_config)
+        for node_id, node in list(xray.nodes.items()):
+            if node.connected:
+                xray.operations.restart_node(node_id, startup_config)
+    
+    bg.add_task(restart_xray)
+    
+    return {
+        "detail": "Users with null UUID have been fixed.",
+        "stats": stats,
+    }
+
+
 @router.post("/users/actions", responses={403: responses._403})
 def perform_users_bulk_action(
     payload: BulkUsersActionRequest,
