@@ -28,6 +28,10 @@ import {
   VStack,
   useColorModeValue,
   useToast,
+  Alert,
+  AlertIcon,
+  AlertTitle,
+  AlertDescription,
 } from "@chakra-ui/react";
 import type { InputProps, SelectProps, TextareaProps } from "@chakra-ui/react";
 import { QuestionMarkCircleIcon, SparklesIcon } from "@heroicons/react/24/outline";
@@ -120,6 +124,12 @@ const TPROXY_OPTIONS: Array<"" | "off" | "redirect" | "tproxy"> = [
   "redirect",
   "tproxy",
 ];
+const REALITY_COMPATIBLE_NETWORKS: Array<InboundFormValues["streamNetwork"]> = [
+  "tcp",
+  "grpc",
+  "splithttp",
+  "xhttp",
+];
 const XHTTP_MODE_OPTIONS: Array<InboundFormValues["xhttpMode"]> = [
   "auto",
   "packet-up",
@@ -144,7 +154,8 @@ export const InboundFormModal: FC<Props> = ({
   const form = useForm<InboundFormValues>({
     defaultValues: createDefaultInboundForm(),
   });
-  const { control, register, handleSubmit, reset, watch } = form;
+  const { control, register, handleSubmit, reset, watch, formState } = form;
+  const { errors } = formState;
   const [tagManuallyEdited, setTagManuallyEdited] = useState(false);
   const [portWarning, setPortWarning] = useState<string | null>(null);
   const [tagError, setTagError] = useState<string | null>(null);
@@ -201,11 +212,41 @@ export const InboundFormModal: FC<Props> = ({
     () => ["X25519, not Post-Quantum", "ML-KEM-768, Post-Quantum"],
     []
   );
+  const ALL_SECURITY_OPTIONS = streamSecurityOptions;
+  const ALL_NETWORK_OPTIONS = streamNetworks;
+  const availableSecurityOptions = useMemo(() => {
+    if (currentProtocol === "vless" || currentProtocol === "trojan") {
+      return ALL_SECURITY_OPTIONS;
+    }
+    return ALL_SECURITY_OPTIONS.filter((opt) => opt !== "reality");
+  }, [ALL_SECURITY_OPTIONS, currentProtocol]);
+
+  const availableNetworkOptions = useMemo(() => {
+    if (streamSecurity === "reality") {
+      return REALITY_COMPATIBLE_NETWORKS;
+    }
+    return ALL_NETWORK_OPTIONS;
+  }, [ALL_NETWORK_OPTIONS, streamSecurity]);
   const computedVlessAuthOptions = useMemo(() => {
     const labels = [...defaultVlessAuthLabels, ...vlessAuthOptions.map((option) => option.label)].filter(Boolean);
     const unique = Array.from(new Set(labels));
     return unique.map((label) => ({ label, value: label }));
   }, [defaultVlessAuthLabels, vlessAuthOptions]);
+
+  useEffect(() => {
+    if (!(currentProtocol === "vless" || currentProtocol === "trojan") && streamSecurity === "reality") {
+      const fallback = availableSecurityOptions.includes("tls" as InboundFormValues["streamSecurity"])
+        ? "tls"
+        : "none";
+      form.setValue("streamSecurity", fallback, { shouldDirty: true });
+    }
+  }, [availableSecurityOptions, currentProtocol, form, streamSecurity]);
+
+  useEffect(() => {
+    if (streamSecurity === "reality" && !REALITY_COMPATIBLE_NETWORKS.includes(streamNetwork as any)) {
+      form.setValue("streamNetwork", "tcp", { shouldDirty: true });
+    }
+  }, [form, streamNetwork, streamSecurity]);
 
   useEffect(() => {
     if (isOpen) {
@@ -882,7 +923,7 @@ export const InboundFormModal: FC<Props> = ({
                 <FormControl>
                   <FormLabel>{t("inbounds.network", "Network")}</FormLabel>
                   <Select {...register("streamNetwork")}>
-                    {streamNetworks.map((network) => (
+                    {availableNetworkOptions.map((network) => (
                       <option key={network} value={network}>
                         {network}
                       </option>
@@ -892,7 +933,7 @@ export const InboundFormModal: FC<Props> = ({
                 <FormControl>
                   <FormLabel>{t("inbounds.security", "Security")}</FormLabel>
                   <Select {...register("streamSecurity")}>
-                    {streamSecurityOptions.map((security) => (
+                    {availableSecurityOptions.map((security) => (
                       <option key={security} value={security}>
                         {security}
                       </option>
@@ -900,6 +941,23 @@ export const InboundFormModal: FC<Props> = ({
                   </Select>
                 </FormControl>
               </SimpleGrid>
+
+              {streamNetwork === "ws" && (
+                <Alert status="warning" borderRadius="md" mt={2}>
+                  <AlertIcon />
+                  <Box>
+                    <AlertTitle fontSize="sm">
+                      {t("inbounds.wsDeprecatedTitle", "WebSocket transport is deprecated in Xray")}
+                    </AlertTitle>
+                    <AlertDescription fontSize="xs">
+                      {t(
+                        "inbounds.wsDeprecatedDescription",
+                        "Xray recommends migrating WebSocket (ws) configs to XHTTP (H2/H3). Consider using xhttp instead of ws for new inbounds."
+                      )}
+                    </AlertDescription>
+                  </Box>
+                </Alert>
+              )}
 
               {streamNetwork === "ws" && (
                 <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
@@ -1259,80 +1317,106 @@ export const InboundFormModal: FC<Props> = ({
               </Stack>
             )}
 
-            {streamSecurity === "reality" && (
-              <Stack
-                spacing={4}
-                borderWidth="1px"
-                borderColor={sectionBorder}
-                borderRadius="lg"
-                p={4}
-              >
-                <FormControl isRequired>
-                  <FormLabel>{t("inbounds.reality.privateKey", "Reality private key")}</FormLabel>
-                  <Textarea rows={3} {...register("realityPrivateKey", { required: true })} />
-                  <Button
-                    size="xs"
-                    mt={2}
-                    variant="outline"
-                    onClick={handleGenerateRealityKeypair}
-                    alignSelf="flex-start"
-                  >
-                    {t("inbounds.reality.generateKeys", "Generate key pair")}
-                  </Button>
-                </FormControl>
-                <FormControl>
-                  <FormLabel>{t("inbounds.reality.publicKey", "Reality public key")}</FormLabel>
-                  <Input
-                    value={derivedRealityPublicKey}
-                    isReadOnly
-                    placeholder={t("inbounds.reality.publicKeyPlaceholder", "Derived automatically")}
-                  />
-                </FormControl>
-                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+              {streamSecurity === "reality" && (
+                <Stack
+                  spacing={4}
+                  borderWidth="1px"
+                  borderColor={sectionBorder}
+                  borderRadius="lg"
+                  p={4}
+                >
+                  <FormControl isRequired isInvalid={Boolean(errors.realityPrivateKey)}>
+                    <FormLabel>{t("inbounds.reality.privateKey", "Reality private key")}</FormLabel>
+                    <Textarea
+                      rows={3}
+                      {...register("realityPrivateKey", { required: true })}
+                    />
+                    <Button
+                      size="xs"
+                      mt={2}
+                      variant="outline"
+                      onClick={handleGenerateRealityKeypair}
+                      alignSelf="flex-start"
+                    >
+                      {t("inbounds.reality.generateKeys", "Generate key pair")}
+                    </Button>
+                    {errors.realityPrivateKey && (
+                      <Text fontSize="xs" color="red.500" mt={1}>
+                        {t("validation.required", "This field is required")}
+                      </Text>
+                    )}
+                  </FormControl>
                   <FormControl>
-                    <FormLabel>{t("inbounds.reality.serverNames", "Server names")}</FormLabel>
+                    <FormLabel>{t("inbounds.reality.publicKey", "Reality public key")}</FormLabel>
+                    <Input
+                      value={derivedRealityPublicKey}
+                      isReadOnly
+                      placeholder={t("inbounds.reality.publicKeyPlaceholder", "Derived automatically")}
+                    />
+                  </FormControl>
+                  <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                    <FormControl isRequired isInvalid={Boolean(errors.realityServerNames)}>
+                      <FormLabel>{t("inbounds.reality.serverNames", "Server names")}</FormLabel>
+                      <Textarea
+                        rows={2}
+                        {...register("realityServerNames", { required: true })}
+                        placeholder="domain.com"
+                      />
+                      <Box fontSize="sm" color="gray.500">
+                        {t("inbounds.serverNamesHint", "Separate entries with commas or new lines.")}
+                      </Box>
+                      {errors.realityServerNames && (
+                        <Text fontSize="xs" color="red.500" mt={1}>
+                          {t("validation.required", "This field is required")}
+                        </Text>
+                      )}
+                    </FormControl>
+                    <FormControl isRequired isInvalid={Boolean(errors.realityDest)}>
+                      <FormLabel>{t("inbounds.reality.dest", "Destination (host:port)")}</FormLabel>
+                      <Input {...register("realityDest", { required: true })} placeholder="example.com:443" />
+                      {errors.realityDest && (
+                        <Text fontSize="xs" color="red.500" mt={1}>
+                          {t("validation.required", "This field is required")}
+                        </Text>
+                      )}
+                    </FormControl>
+                  </SimpleGrid>
+                  <FormControl isRequired isInvalid={Boolean(errors.realityShortIds)}>
+                    <FormLabel>{t("inbounds.reality.shortIds", "Short IDs")}</FormLabel>
                     <Textarea
                       rows={2}
-                      {...register("realityServerNames")}
-                      placeholder="domain.com"
+                      {...register("realityShortIds", { required: true })}
                     />
+                    <Button
+                      size="xs"
+                      mt={2}
+                      variant="outline"
+                      onClick={handleGenerateShortId}
+                      alignSelf="flex-start"
+                    >
+                      {t("inbounds.reality.generateShortId", "Generate short ID")}
+                    </Button>
                     <Box fontSize="sm" color="gray.500">
-                      {t("inbounds.serverNamesHint", "Separate entries with commas or new lines.")}
+                      {t("inbounds.shortIdsHint", "Separate entries with commas or new lines.")}
                     </Box>
+                    {errors.realityShortIds && (
+                      <Text fontSize="xs" color="red.500" mt={1}>
+                        {t("validation.required", "This field is required")}
+                      </Text>
+                    )}
                   </FormControl>
-                  <FormControl>
-                    <FormLabel>{t("inbounds.reality.dest", "Destination (host:port)")}</FormLabel>
-                    <Input {...register("realityDest")} placeholder="example.com:443" />
-                  </FormControl>
-                </SimpleGrid>
-                <FormControl>
-                  <FormLabel>{t("inbounds.reality.shortIds", "Short IDs")}</FormLabel>
-                  <Textarea rows={2} {...register("realityShortIds")} />
-                  <Button
-                    size="xs"
-                    mt={2}
-                    variant="outline"
-                    onClick={handleGenerateShortId}
-                    alignSelf="flex-start"
-                  >
-                    {t("inbounds.reality.generateShortId", "Generate short ID")}
-                  </Button>
-                  <Box fontSize="sm" color="gray.500">
-                    {t("inbounds.shortIdsHint", "Separate entries with commas or new lines.")}
-                  </Box>
-                </FormControl>
-                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                  <FormControl>
-                    <FormLabel>{t("inbounds.reality.spiderX", "SpiderX")}</FormLabel>
-                    <Input {...register("realitySpiderX")} />
-                  </FormControl>
-                  <FormControl>
-                    <FormLabel>{t("inbounds.reality.xver", "Xver")}</FormLabel>
-                    <Input {...register("realityXver")} />
-                  </FormControl>
-                </SimpleGrid>
-              </Stack>
-            )}
+                  <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                    <FormControl>
+                      <FormLabel>{t("inbounds.reality.spiderX", "SpiderX")}</FormLabel>
+                      <Input {...register("realitySpiderX")} />
+                    </FormControl>
+                    <FormControl>
+                      <FormLabel>{t("inbounds.reality.xver", "Xver")}</FormLabel>
+                      <Input {...register("realityXver")} />
+                    </FormControl>
+                  </SimpleGrid>
+                </Stack>
+              )}
 
             {supportsFallback && (
               <Stack

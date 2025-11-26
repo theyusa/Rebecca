@@ -7,6 +7,7 @@ export type StreamNetwork =
   | "grpc"
   | "kcp"
   | "quic"
+  | "http"
   | "httpupgrade"
   | "splithttp"
   | "xhttp";
@@ -64,59 +65,120 @@ export type InboundFormValues = {
   listen: string;
   port: string;
   protocol: Protocol;
+
+  // proxy protocol
+  tcpAcceptProxyProtocol: boolean;
+  wsAcceptProxyProtocol: boolean;
+  httpupgradeAcceptProxyProtocol: boolean;
+
+  // vmess/vless
   disableInsecureEncryption: boolean;
   vlessDecryption: string;
   vlessEncryption: string;
   fallbacks: FallbackForm[];
+
+  // shadowsocks
   shadowsocksNetwork: string;
+
+  // sniffing
   sniffingEnabled: boolean;
   sniffingDestinations: string[];
   sniffingRouteOnly: boolean;
   sniffingMetadataOnly: boolean;
+
+  // stream
   streamNetwork: StreamNetwork;
   streamSecurity: StreamSecurity;
+
+  // TLS
   tlsServerName: string;
   tlsAlpn: string[];
   tlsAllowInsecure: boolean;
   tlsFingerprint: string;
   tlsRawSettings: Record<string, any>;
+
+  // REALITY
   realityPrivateKey: string;
-  realityServerNames: string;
-  realityShortIds: string;
+  realityServerNames: string; // multi-line / comma-separated
+  realityShortIds: string; // multi-line / comma-separated
   realityDest: string;
   realitySpiderX: string;
   realityXver: string;
+
+  // WS
   wsPath: string;
-  wsHost: string;
+  wsHost: string; // mapped به Host header
+  wsHeaders: HeaderForm[];
+
+  // TCP header
   tcpHeaderType: "none" | "http";
   tcpHttpHosts: string;
   tcpHttpPath: string;
+
+  // gRPC
   grpcServiceName: string;
   grpcAuthority: string;
   grpcMultiMode: boolean;
+
+  // KCP
   kcpHeaderType: string;
   kcpSeed: string;
+
+  // QUIC
   quicSecurity: string;
   quicKey: string;
   quicHeaderType: string;
+
+  // HTTP (h2/h1.1 transport, نه پروتکل HTTP inbound)
+  httpPath: string;
+  httpHost: string;
+
+  // HTTPUpgrade
   httpupgradePath: string;
   httpupgradeHost: string;
+  httpupgradeHeaders: HeaderForm[];
+
+  // SplitHTTP
   splithttpPath: string;
   splithttpHost: string;
+  splithttpScMaxConcurrentPosts: string;
+  splithttpScMaxEachPostBytes: string;
+  splithttpScMinPostsIntervalMs: string;
+  splithttpNoSSEHeader: boolean;
+  splithttpXPaddingBytes: string;
+  splithttpXmuxMaxConcurrency: string;
+  splithttpXmuxMaxConnections: string;
+  splithttpXmuxCMaxReuseTimes: string;
+  splithttpXmuxCMaxLifetimeMs: string;
+  splithttpMode: "auto" | "packet-up" | "stream-up";
+  splithttpNoGRPCHeader: boolean;
+  splithttpHeaders: HeaderForm[];
+
+  // XHTTP
   xhttpHost: string;
   xhttpPath: string;
   xhttpHeaders: HeaderForm[];
   xhttpMode: "auto" | "packet-up" | "stream-up" | "stream-one";
   xhttpScMaxBufferedPosts: string;
   xhttpScMaxEachPostBytes: string;
+  xhttpScMinPostsIntervalMs: string;
   xhttpScStreamUpServerSecs: string;
   xhttpPaddingBytes: string;
   xhttpNoSSEHeader: boolean;
+  xhttpNoGRPCHeader: boolean;
+
+  // vless extras
   vlessSelectedAuth: string;
+
+  // sockopt
   sockoptEnabled: boolean;
   sockopt: SockoptFormValues;
+
+  // HTTP inbound
   httpAccounts: ProxyAccountForm[];
   httpAllowTransparent: boolean;
+
+  // SOCKS inbound
   socksAuth: "password" | "noauth";
   socksAccounts: ProxyAccountForm[];
   socksUdpEnabled: boolean;
@@ -140,6 +202,7 @@ export const streamNetworks: StreamNetwork[] = [
   "grpc",
   "kcp",
   "quic",
+  "http",
   "httpupgrade",
   "splithttp",
   "xhttp",
@@ -268,6 +331,9 @@ export const createDefaultInboundForm = (protocol: Protocol = "vless"): InboundF
   listen: "",
   port: "",
   protocol,
+  tcpAcceptProxyProtocol: false,
+  wsAcceptProxyProtocol: false,
+  httpupgradeAcceptProxyProtocol: false,
   disableInsecureEncryption: true,
   vlessDecryption: "none",
   vlessEncryption: "",
@@ -292,6 +358,7 @@ export const createDefaultInboundForm = (protocol: Protocol = "vless"): InboundF
   realityXver: "0",
   wsPath: "/",
   wsHost: "",
+  wsHeaders: [createDefaultHeader()],
   tcpHeaderType: "none",
   tcpHttpHosts: "",
   tcpHttpPath: "/",
@@ -303,19 +370,36 @@ export const createDefaultInboundForm = (protocol: Protocol = "vless"): InboundF
   quicSecurity: "",
   quicKey: "",
   quicHeaderType: "none",
+  httpPath: "/",
+  httpHost: "",
   httpupgradePath: "/",
   httpupgradeHost: "",
+  httpupgradeHeaders: [createDefaultHeader()],
   splithttpPath: "/",
   splithttpHost: "",
+  splithttpScMaxConcurrentPosts: "100-200",
+  splithttpScMaxEachPostBytes: "1000000-2000000",
+  splithttpScMinPostsIntervalMs: "10-50",
+  splithttpNoSSEHeader: false,
+  splithttpXPaddingBytes: "100-1000",
+  splithttpXmuxMaxConcurrency: "16-32",
+  splithttpXmuxMaxConnections: "0",
+  splithttpXmuxCMaxReuseTimes: "64-128",
+  splithttpXmuxCMaxLifetimeMs: "0",
+  splithttpMode: "auto",
+  splithttpNoGRPCHeader: false,
+  splithttpHeaders: [createDefaultHeader()],
   xhttpHost: "",
   xhttpPath: "/",
   xhttpHeaders: [createDefaultHeader()],
   xhttpMode: "auto",
   xhttpScMaxBufferedPosts: "30",
   xhttpScMaxEachPostBytes: "1000000",
+  xhttpScMinPostsIntervalMs: "30",
   xhttpScStreamUpServerSecs: "20-80",
   xhttpPaddingBytes: "100-1000",
   xhttpNoSSEHeader: false,
+  xhttpNoGRPCHeader: false,
   vlessSelectedAuth: "",
   sockoptEnabled: false,
   sockopt: createDefaultSockopt(),
@@ -383,6 +467,8 @@ export const rawInboundToFormValues = (raw: RawInbound): InboundFormValues => {
     sniffingMetadataOnly: Boolean(sniffing.metadataOnly ?? base.sniffingMetadataOnly),
     streamNetwork: stream.network ?? base.streamNetwork,
     streamSecurity: stream.security ?? base.streamSecurity,
+    tcpAcceptProxyProtocol: Boolean(stream?.tcpSettings?.acceptProxyProtocol ?? base.tcpAcceptProxyProtocol),
+    wsAcceptProxyProtocol: Boolean(stream?.wsSettings?.acceptProxyProtocol ?? base.wsAcceptProxyProtocol),
     tlsServerName: tlsSettings.serverName ?? base.tlsServerName,
     tlsAlpn: Array.isArray(tlsSettings.alpn) ? tlsSettings.alpn : base.tlsAlpn,
     tlsAllowInsecure: Boolean(tlsSettings.allowInsecure ?? base.tlsAllowInsecure),
@@ -395,7 +481,15 @@ export const rawInboundToFormValues = (raw: RawInbound): InboundFormValues => {
     realitySpiderX: realitySettings.spiderX ?? base.realitySpiderX,
     realityXver: realitySettings.xver?.toString() ?? base.realityXver,
     wsPath: stream?.wsSettings?.path ?? base.wsPath,
-    wsHost: stream?.wsSettings?.headers?.Host ?? base.wsHost,
+    wsHost:
+      stream?.wsSettings?.headers?.Host !== undefined
+        ? (Array.isArray(stream.wsSettings.headers.Host)
+            ? stream.wsSettings.headers.Host.join(",")
+            : String(stream.wsSettings.headers.Host))
+        : base.wsHost,
+    wsHeaders: stream?.wsSettings?.headers
+      ? headersToForm(stream.wsSettings.headers)
+      : base.wsHeaders,
     tcpHeaderType: stream?.tcpSettings?.header?.type ?? base.tcpHeaderType,
     tcpHttpHosts: joinLines(stream?.tcpSettings?.header?.request?.headers?.Host),
     tcpHttpPath: Array.isArray(stream?.tcpSettings?.header?.request?.path)
@@ -409,10 +503,37 @@ export const rawInboundToFormValues = (raw: RawInbound): InboundFormValues => {
     quicSecurity: stream?.quicSettings?.security ?? base.quicSecurity,
     quicKey: stream?.quicSettings?.key ?? base.quicKey,
     quicHeaderType: stream?.quicSettings?.header?.type ?? base.quicHeaderType,
+    httpPath: stream?.httpSettings?.path ?? base.httpPath,
+    httpHost: joinLines(stream?.httpSettings?.host),
     httpupgradePath: stream?.httpupgradeSettings?.path ?? base.httpupgradePath,
     httpupgradeHost: stream?.httpupgradeSettings?.host ?? base.httpupgradeHost,
+    httpupgradeHeaders: stream?.httpupgradeSettings?.headers
+      ? headersToForm(stream.httpupgradeSettings.headers)
+      : base.httpupgradeHeaders,
     splithttpPath: stream?.splithttpSettings?.path ?? base.splithttpPath,
     splithttpHost: stream?.splithttpSettings?.host ?? base.splithttpHost,
+    splithttpScMaxConcurrentPosts:
+      stream?.splithttpSettings?.scMaxConcurrentPosts?.toString() ?? base.splithttpScMaxConcurrentPosts,
+    splithttpScMaxEachPostBytes:
+      stream?.splithttpSettings?.scMaxEachPostBytes?.toString() ?? base.splithttpScMaxEachPostBytes,
+    splithttpScMinPostsIntervalMs:
+      stream?.splithttpSettings?.scMinPostsIntervalMs?.toString() ?? base.splithttpScMinPostsIntervalMs,
+    splithttpNoSSEHeader: Boolean(stream?.splithttpSettings?.noSSEHeader ?? base.splithttpNoSSEHeader),
+    splithttpXPaddingBytes:
+      stream?.splithttpSettings?.xPaddingBytes?.toString() ?? base.splithttpXPaddingBytes,
+    splithttpXmuxMaxConcurrency:
+      stream?.splithttpSettings?.xmux?.maxConcurrency?.toString() ?? base.splithttpXmuxMaxConcurrency,
+    splithttpXmuxMaxConnections:
+      stream?.splithttpSettings?.xmux?.maxConnections?.toString() ?? base.splithttpXmuxMaxConnections,
+    splithttpXmuxCMaxReuseTimes:
+      stream?.splithttpSettings?.xmux?.cMaxReuseTimes?.toString() ?? base.splithttpXmuxCMaxReuseTimes,
+    splithttpXmuxCMaxLifetimeMs:
+      stream?.splithttpSettings?.xmux?.cMaxLifetimeMs?.toString() ?? base.splithttpXmuxCMaxLifetimeMs,
+    splithttpMode: stream?.splithttpSettings?.mode ?? base.splithttpMode,
+    splithttpNoGRPCHeader: Boolean(stream?.splithttpSettings?.noGRPCHeader ?? base.splithttpNoGRPCHeader),
+    splithttpHeaders: stream?.splithttpSettings?.headers
+      ? headersToForm(stream.splithttpSettings.headers)
+      : base.splithttpHeaders,
     xhttpHost: stream?.xhttpSettings?.host ?? base.xhttpHost,
     xhttpPath: stream?.xhttpSettings?.path ?? base.xhttpPath,
     xhttpHeaders: stream?.xhttpSettings?.headers
@@ -423,10 +544,13 @@ export const rawInboundToFormValues = (raw: RawInbound): InboundFormValues => {
       stream?.xhttpSettings?.scMaxBufferedPosts?.toString() ?? base.xhttpScMaxBufferedPosts,
     xhttpScMaxEachPostBytes:
       stream?.xhttpSettings?.scMaxEachPostBytes?.toString() ?? base.xhttpScMaxEachPostBytes,
+    xhttpScMinPostsIntervalMs:
+      stream?.xhttpSettings?.scMinPostsIntervalMs?.toString() ?? base.xhttpScMinPostsIntervalMs,
     xhttpScStreamUpServerSecs:
       stream?.xhttpSettings?.scStreamUpServerSecs?.toString() ?? base.xhttpScStreamUpServerSecs,
     xhttpPaddingBytes: stream?.xhttpSettings?.xPaddingBytes ?? base.xhttpPaddingBytes,
     xhttpNoSSEHeader: Boolean(stream?.xhttpSettings?.noSSEHeader ?? base.xhttpNoSSEHeader),
+    xhttpNoGRPCHeader: Boolean(stream?.xhttpSettings?.noGRPCHeader ?? base.xhttpNoGRPCHeader),
     vlessSelectedAuth: settings.selectedAuth ?? base.vlessSelectedAuth,
     sockoptEnabled: Boolean(stream?.sockopt),
     sockopt: (() => {
@@ -475,6 +599,38 @@ export const rawInboundToFormValues = (raw: RawInbound): InboundFormValues => {
   };
 };
 
+const normalizeHeaderMap = (headers: HeaderForm[]): Record<string, string | string[]> | undefined => {
+  const record: Record<string, string | string[]> = {};
+  headers.forEach(({ name, value }) => {
+    const trimmedName = name?.trim();
+    const trimmedValue = value?.trim();
+    if (!trimmedName || !trimmedValue) {
+      return;
+    }
+    const parts = trimmedValue.split(",").map((entry) => entry.trim()).filter(Boolean);
+    record[trimmedName] = parts.length > 1 ? parts : trimmedValue;
+  });
+  return Object.keys(record).length ? record : undefined;
+};
+
+const headersToForm = (headers: Record<string, string | string[]> | undefined): HeaderForm[] => {
+  if (!headers) {
+    return [createDefaultHeader()];
+  }
+  const result: HeaderForm[] = [];
+  Object.entries(headers).forEach(([name, value]) => {
+    if (Array.isArray(value)) {
+      value.forEach((item) => result.push({ name, value: item?.toString() ?? "" }));
+    } else {
+      result.push({ name, value: value?.toString() ?? "" });
+    }
+  });
+  return result.length ? result : [createDefaultHeader()];
+};
+
+const headersFromForm = (headers: HeaderForm[]): Record<string, string | string[]> | undefined =>
+  normalizeHeaderMap(headers);
+
 const buildStreamSettings = (values: InboundFormValues): Record<string, any> => {
   const stream: Record<string, any> = {
     network: values.streamNetwork,
@@ -482,26 +638,49 @@ const buildStreamSettings = (values: InboundFormValues): Record<string, any> => 
   };
 
   if (values.streamNetwork === "ws") {
+    let headers = headersFromForm(values.wsHeaders);
+    const wsHost = values.wsHost.trim();
+    if (wsHost) {
+      if (!headers) {
+        headers = { Host: wsHost };
+      } else if (!("Host" in headers)) {
+        headers.Host = wsHost;
+      }
+    }
+
     stream.wsSettings = cleanObject({
+      acceptProxyProtocol: values.wsAcceptProxyProtocol || undefined,
       path: values.wsPath || undefined,
-      headers: values.wsHost ? { Host: values.wsHost } : undefined,
+      headers,
     });
   }
 
   if (values.streamNetwork === "tcp") {
+    const tcpSettings: Record<string, any> = {
+      acceptProxyProtocol: values.tcpAcceptProxyProtocol || undefined,
+    };
     if (values.tcpHeaderType === "http") {
-      stream.tcpSettings = {
-        header: {
-          type: "http",
-          request: {
-            path: values.tcpHttpPath ? [values.tcpHttpPath] : [],
-            headers: values.tcpHttpHosts ? { Host: splitLines(values.tcpHttpHosts) } : {},
-          },
+      tcpSettings.header = cleanObject({
+        type: "http",
+        request: {
+          version: "1.1",
+          method: "GET",
+          path: splitLines(values.tcpHttpPath),
+          headers: cleanObject({
+            Host: splitLines(values.tcpHttpHosts),
+          }),
         },
-      };
+        response: {
+          version: "1.1",
+          status: "200",
+          reason: "OK",
+          headers: {},
+        },
+      });
     } else {
-      stream.tcpSettings = { header: { type: "none" } };
+      tcpSettings.header = { type: "none" };
     }
+    stream.tcpSettings = cleanObject(tcpSettings);
   }
 
   if (values.streamNetwork === "grpc") {
@@ -527,10 +706,19 @@ const buildStreamSettings = (values: InboundFormValues): Record<string, any> => 
     });
   }
 
+  if (values.streamNetwork === "http") {
+    stream.httpSettings = cleanObject({
+      path: values.httpPath || undefined,
+      host: splitLines(values.httpHost),
+    });
+  }
+
   if (values.streamNetwork === "httpupgrade") {
     stream.httpupgradeSettings = cleanObject({
+      acceptProxyProtocol: values.httpupgradeAcceptProxyProtocol || undefined,
       path: values.httpupgradePath,
       host: values.httpupgradeHost,
+      headers: headersFromForm(values.httpupgradeHeaders),
     });
   }
 
@@ -538,20 +726,41 @@ const buildStreamSettings = (values: InboundFormValues): Record<string, any> => 
     stream.splithttpSettings = cleanObject({
       path: values.splithttpPath,
       host: values.splithttpHost,
+      headers: headersFromForm(values.splithttpHeaders),
+      scMaxConcurrentPosts: values.splithttpScMaxConcurrentPosts?.trim() || undefined,
+      scMaxEachPostBytes: values.splithttpScMaxEachPostBytes?.trim() || undefined,
+      scMinPostsIntervalMs: values.splithttpScMinPostsIntervalMs?.trim() || undefined,
+      noSSEHeader: values.splithttpNoSSEHeader || undefined,
+      xPaddingBytes: values.splithttpXPaddingBytes?.trim() || undefined,
+      xmux: cleanObject({
+        maxConcurrency: values.splithttpXmuxMaxConcurrency?.trim() || undefined,
+        maxConnections: parseOptionalNumber(values.splithttpXmuxMaxConnections),
+        cMaxReuseTimes: values.splithttpXmuxCMaxReuseTimes?.trim() || undefined,
+        cMaxLifetimeMs: parseOptionalNumber(values.splithttpXmuxCMaxLifetimeMs),
+      }),
+      mode: values.splithttpMode,
+      noGRPCHeader: values.splithttpNoGRPCHeader || undefined,
     });
   }
 
   if (values.streamNetwork === "xhttp") {
+    const mode = values.xhttpMode;
     stream.xhttpSettings = cleanObject({
       path: values.xhttpPath,
       host: values.xhttpHost,
       headers: headersFromForm(values.xhttpHeaders),
-      mode: values.xhttpMode,
-      scMaxBufferedPosts: parseOptionalNumber(values.xhttpScMaxBufferedPosts),
-      scMaxEachPostBytes: values.xhttpScMaxEachPostBytes?.trim() || undefined,
+      scMaxBufferedPosts:
+        mode === "packet-up" ? parseOptionalNumber(values.xhttpScMaxBufferedPosts) : undefined,
+      scMaxEachPostBytes:
+        mode === "packet-up" ? values.xhttpScMaxEachPostBytes?.trim() || undefined : undefined,
+      scMinPostsIntervalMs:
+        mode === "packet-up" ? values.xhttpScMinPostsIntervalMs?.trim() || undefined : undefined,
       scStreamUpServerSecs: values.xhttpScStreamUpServerSecs?.trim() || undefined,
       xPaddingBytes: values.xhttpPaddingBytes?.trim() || undefined,
       noSSEHeader: values.xhttpNoSSEHeader || undefined,
+      noGRPCHeader:
+        ["stream-up", "stream-one"].includes(mode) ? values.xhttpNoGRPCHeader || undefined : undefined,
+      mode,
     });
   }
 
@@ -568,12 +777,14 @@ const buildStreamSettings = (values: InboundFormValues): Record<string, any> => 
   }
 
   if (values.streamSecurity === "reality") {
+    const serverNames = splitLines(values.realityServerNames);
+    const shortIds = splitLines(values.realityShortIds);
     stream.realitySettings = cleanObject({
-      privateKey: values.realityPrivateKey || undefined,
-      serverNames: splitLines(values.realityServerNames),
-      shortIds: splitLines(values.realityShortIds),
-      dest: values.realityDest || undefined,
-      spiderX: values.realitySpiderX || undefined,
+      privateKey: values.realityPrivateKey?.trim() || undefined,
+      dest: values.realityDest?.trim() || undefined,
+      serverNames: serverNames.length ? serverNames : undefined,
+      shortIds: shortIds.length ? shortIds : undefined,
+      spiderX: values.realitySpiderX?.trim() || undefined,
       xver: values.realityXver ? Number(values.realityXver) : undefined,
     });
   }
@@ -681,31 +892,4 @@ export const buildInboundPayload = (values: InboundFormValues): RawInbound => {
   }
 
   return payload;
-};
-const headersToForm = (headers: Record<string, string | string[]> | undefined): HeaderForm[] => {
-  if (!headers) {
-    return [createDefaultHeader()];
-  }
-  const result: HeaderForm[] = [];
-  Object.entries(headers).forEach(([name, value]) => {
-    if (Array.isArray(value)) {
-      value.forEach((item) => result.push({ name, value: item?.toString() ?? "" }));
-    } else {
-      result.push({ name, value: value?.toString() ?? "" });
-    }
-  });
-  return result.length ? result : [createDefaultHeader()];
-};
-
-const headersFromForm = (headers: HeaderForm[]): Record<string, string> | undefined => {
-  const record: Record<string, string> = {};
-  headers.forEach(({ name, value }) => {
-    const trimmedName = name?.trim();
-    const trimmedValue = value?.trim();
-    if (!trimmedName || !trimmedValue) {
-      return;
-    }
-    record[trimmedName] = trimmedValue;
-  });
-  return Object.keys(record).length ? record : undefined;
 };

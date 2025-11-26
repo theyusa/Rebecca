@@ -54,6 +54,7 @@ interface WireguardPeerForm {
   allowedIPs: string;
   endpoint: string;
   keepAlive: number;
+  presharedKey: string;
 }
 
 interface OutboundFormValues {
@@ -143,6 +144,7 @@ const defaultValues: OutboundFormValues = {
       allowedIPs: "0.0.0.0/0,::/0",
       endpoint: "",
       keepAlive: 0,
+      presharedKey: "",
     },
   ],
 };
@@ -237,6 +239,7 @@ const buildOutboundJson = (values: OutboundFormValues) => {
           : undefined,
         endpoint: peer.endpoint || undefined,
         keepAlive: Number(peer.keepAlive) || undefined,
+        preSharedKey: peer.presharedKey || undefined,
       }));
       break;
     default:
@@ -323,6 +326,7 @@ export const OutboundModal: FC<OutboundModalProps> = ({
   const requiredMessage = t("validation.required");
   const invalidPortMessage = t("validation.invalidPort");
   const typedProtocol = (protocol as ProtocolValue) || Protocols.VLESS;
+  const isWireguard = typedProtocol === Protocols.Wireguard;
   const requiresEndpoint = !([Protocols.Freedom, Protocols.Blackhole, Protocols.DNS, Protocols.Wireguard] as ProtocolValue[]).includes(
     typedProtocol
   );
@@ -337,6 +341,50 @@ export const OutboundModal: FC<OutboundModalProps> = ({
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [configInput, setConfigInput] = useState("");
   const updatingFromJsonRef = useRef(false);
+
+  // capability flags to mirror backend support
+  const canStream = useMemo(() => {
+    const allowed: ProtocolValue[] = [Protocols.VMess, Protocols.VLESS, Protocols.Trojan, Protocols.Shadowsocks];
+    return allowed.includes(typedProtocol);
+  }, [typedProtocol]);
+
+  const canTls = useMemo(() => {
+    const allowed: ProtocolValue[] = [Protocols.VMess, Protocols.VLESS, Protocols.Trojan, Protocols.Shadowsocks];
+    return allowed.includes(typedProtocol);
+  }, [typedProtocol]);
+
+  const canReality = useMemo(() => {
+    const allowed: ProtocolValue[] = [Protocols.VLESS, Protocols.Trojan];
+    return allowed.includes(typedProtocol) && (network === "tcp" || network === "grpc");
+  }, [network, typedProtocol]);
+
+  const canMux = useMemo(() => {
+    const allowed: ProtocolValue[] = [
+      Protocols.VMess,
+      Protocols.VLESS,
+      Protocols.Trojan,
+      Protocols.Shadowsocks,
+      Protocols.HTTP,
+      Protocols.Socks,
+    ];
+    if (!allowed.includes(typedProtocol)) {
+      return false;
+    }
+    if (typedProtocol === Protocols.VLESS && (formValues?.flow ?? "").trim().length > 0) {
+      return false;
+    }
+    return true;
+  }, [formValues?.flow, typedProtocol]);
+
+  const canAnySecurity = canTls || canReality;
+
+  useEffect(() => {
+    if (isWireguard) {
+      setValue("tlsEnabled", false);
+      setValue("realityEnabled", false);
+      setValue("network", "tcp");
+    }
+  }, [isWireguard, setValue]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -366,6 +414,48 @@ export const OutboundModal: FC<OutboundModalProps> = ({
     setJsonError(null);
   }, [formValues]);
 
+  useEffect(() => {
+    if (!canStream) {
+      setValue("network", defaultValues.network);
+      setValue("tcpType", defaultValues.tcpType);
+      setValue("tcpHost", "");
+      setValue("tcpPath", "");
+      setValue("wsHost", "");
+      setValue("wsPath", "");
+      setValue("grpcServiceName", "");
+    }
+  }, [canStream, setValue]);
+
+  useEffect(() => {
+    if (!canTls && tlsEnabled) {
+      setValue("tlsEnabled", false);
+      setValue("tlsServerName", "");
+    }
+  }, [canTls, setValue, tlsEnabled]);
+
+  useEffect(() => {
+    if (!canReality && realityEnabled) {
+      setValue("realityEnabled", false);
+      setValue("realityPublicKey", "");
+      setValue("realityShortId", "");
+    }
+  }, [canReality, realityEnabled, setValue]);
+
+  useEffect(() => {
+    if (!canMux && muxEnabled) {
+      setValue("muxEnabled", false);
+    }
+  }, [canMux, muxEnabled, setValue]);
+
+  // defensive: wireguard should not keep security/network overrides
+  useEffect(() => {
+    if (isWireguard) {
+      setValue("tlsEnabled", false);
+      setValue("realityEnabled", false);
+      setValue("network", "tcp");
+    }
+  }, [isWireguard, setValue]);
+
   const protocolOptions = useMemo(
     () => [
       Protocols.VLESS,
@@ -393,13 +483,14 @@ export const OutboundModal: FC<OutboundModalProps> = ({
       muxConcurrency: Number(json?.mux?.concurrency ?? defaultValues.muxConcurrency),
     };
 
-    const stream = outbound?.stream;
+    const stream = outbound?.stream ?? json?.streamSettings ?? json?.stream;
     mapped.network = (stream?.network as OutboundFormValues["network"]) ?? defaultValues.network;
-    mapped.tlsEnabled = stream?.security === "tls";
-    mapped.realityEnabled = stream?.security === "reality";
-    mapped.tlsServerName = stream?.tls?.serverName ?? "";
-    mapped.realityPublicKey = stream?.reality?.publicKey ?? "";
-    mapped.realityShortId = stream?.reality?.shortId ?? "";
+    const streamRaw: any = stream;
+    mapped.tlsEnabled = stream?.security === "tls" || Boolean(streamRaw?.tls || streamRaw?.tlsSettings);
+    mapped.realityEnabled = stream?.security === "reality" || Boolean(streamRaw?.reality || streamRaw?.realitySettings);
+    mapped.tlsServerName = streamRaw?.tls?.serverName ?? streamRaw?.tlsSettings?.serverName ?? "";
+    mapped.realityPublicKey = streamRaw?.reality?.publicKey ?? streamRaw?.realitySettings?.publicKey ?? "";
+    mapped.realityShortId = streamRaw?.reality?.shortId ?? streamRaw?.realitySettings?.shortId ?? "";
 
     if (stream?.network === "tcp" && stream.tcp) {
       mapped.tcpType = stream.tcp.type as OutboundFormValues["tcpType"];
@@ -484,19 +575,28 @@ export const OutboundModal: FC<OutboundModalProps> = ({
       case Protocols.Wireguard: {
         const settings = outbound.settings as Outbound.WireguardSettings;
         mapped.wireguardSecret = settings?.secretKey ?? "";
-        mapped.wireguardAddress = settings?.address ?? "";
+        mapped.wireguardAddress = Array.isArray((settings as any)?.address)
+          ? (settings as any).address.join(",")
+          : settings?.address ?? "";
         const peers =
           settings?.peers?.map((peer: Outbound.WireguardPeer) => ({
             publicKey: peer.publicKey ?? "",
             allowedIPs: Array.isArray(peer.allowedIPs) ? peer.allowedIPs.join(",") : "",
             endpoint: peer.endpoint ?? "",
             keepAlive: Number(peer.keepAlive ?? 0),
+            presharedKey: (peer as any).preSharedKey ?? (peer as any).psk ?? "",
           })) ?? [];
         mapped.wireguardPeers = peers.length > 0 ? peers : defaultValues.wireguardPeers;
         break;
       }
       default:
         break;
+    }
+
+    if (mapped.protocol === Protocols.Wireguard) {
+      mapped.tlsEnabled = false;
+      mapped.realityEnabled = false;
+      mapped.network = "tcp";
     }
 
     if (json?.mux?.concurrency != null) {
@@ -524,10 +624,81 @@ export const OutboundModal: FC<OutboundModalProps> = ({
     }
   };
 
+  const parseWireguardIni = (text: string) => {
+    if (!text.toLowerCase().includes("[interface]")) return null;
+    const lines = text.split(/\r?\n/);
+    let current: "interface" | "peer" | null = null;
+    const iface: Record<string, string> = {};
+    const peersRaw: Array<Record<string, string>> = [];
+
+    lines.forEach((raw) => {
+      const line = raw.trim();
+      if (!line || line.startsWith("#") || line.startsWith(";")) return;
+      const lower = line.toLowerCase();
+      if (lower === "[interface]") {
+        current = "interface";
+        return;
+      }
+      if (lower === "[peer]") {
+        current = "peer";
+        peersRaw.push({});
+        return;
+      }
+      const [key, ...rest] = line.split("=");
+      if (!key || rest.length === 0) return;
+      const value = rest.join("=").trim();
+      if (current === "interface") {
+        iface[key.trim().toLowerCase()] = value;
+      } else if (current === "peer") {
+        const target = peersRaw[peersRaw.length - 1];
+        if (target) {
+          target[key.trim().toLowerCase()] = value;
+        }
+      }
+    });
+
+    if (!iface.privatekey) return null;
+    const addresses = iface.address ? iface.address.split(",").map((item) => item.trim()).filter(Boolean) : [];
+    const peers = peersRaw.map((peer) => ({
+      publicKey: peer.publickey || "",
+      preSharedKey: peer.presharedkey || "",
+      allowedIPs: (peer.allowedips || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+      endpoint: peer.endpoint || "",
+      keepAlive: peer.persistentkeepalive ? Number(peer.persistentkeepalive) || 0 : 0,
+    }));
+
+    return {
+      tag: "wireguard-import",
+      protocol: Protocols.Wireguard,
+      settings: {
+        secretKey: iface.privatekey,
+        address: addresses,
+        peers,
+      },
+    };
+  };
+
   const handleConfigToJson = () => {
     const trimmed = configInput.trim();
     if (!trimmed) {
       setJsonError(t("pages.outbound.configEmpty", "Please paste a config link"));
+      return;
+    }
+    const wg = parseWireguardIni(trimmed);
+    if (wg) {
+      const formatted = JSON.stringify(wg, null, 2);
+      setConfigInput("");
+      handleJsonEditorChange(formatted);
+      toast({
+        status: "success",
+        duration: 2000,
+        position: "top",
+        title: t("pages.outbound.configConvertedTitle", "Config converted"),
+        description: t("pages.outbound.configConvertedDesc", "Configuration applied to the form."),
+      });
       return;
     }
     const outboundFromLink = Outbound.fromLink(trimmed);
@@ -824,6 +995,7 @@ export const OutboundModal: FC<OutboundModalProps> = ({
                                   allowedIPs: "0.0.0.0/0,::/0",
                                   endpoint: "",
                                   keepAlive: 0,
+                                  presharedKey: "",
                                 })
                               }
                             />
@@ -863,6 +1035,10 @@ export const OutboundModal: FC<OutboundModalProps> = ({
                                   {...register(`wireguardPeers.${index}.keepAlive` as const, { valueAsNumber: true })}
                                 />
                               </FormControl>
+                              <FormControl mt={2}>
+                                <FormLabel>{t("pages.outbound.presharedKey", "Preshared key")}</FormLabel>
+                                <Input size="sm" {...register(`wireguardPeers.${index}.presharedKey` as const)} />
+                              </FormControl>
                             </Box>
                           ))}
                         </VStack>
@@ -870,140 +1046,156 @@ export const OutboundModal: FC<OutboundModalProps> = ({
                     </Box>
                   )}
 
-                  <Box>
-                    <Text fontWeight="semibold" mb={3}>
-                      {t("pages.outbound.transport", "Transport")}
-                    </Text>
-                    <VStack spacing={3} align="stretch">
-                      <FormControl>
-                        <FormLabel>{t("pages.outbound.network")}</FormLabel>
-                        <Select size="sm" {...register("network")}
-                          onChange={(event) => {
-                            register("network").onChange(event);
-                          }}
-                        >
-                          <option value="tcp">tcp</option>
-                          <option value="ws">ws</option>
-                          <option value="grpc">grpc</option>
-                        </Select>
-                      </FormControl>
-                      {network === "tcp" && (
-                        <HStack>
+                  {canStream && (
+                    <Box>
+                      <Text fontWeight="semibold" mb={3}>
+                        {t("pages.outbound.transport", "Transport")}
+                      </Text>
+                      <VStack spacing={3} align="stretch">
+                        <FormControl>
+                          <FormLabel>{t("pages.outbound.network")}</FormLabel>
+                          <Select
+                            size="sm"
+                            {...register("network")}
+                            onChange={(event) => {
+                              register("network").onChange(event);
+                            }}
+                          >
+                            <option value="tcp">tcp</option>
+                            <option value="ws">ws</option>
+                            <option value="grpc">grpc</option>
+                          </Select>
+                        </FormControl>
+                        {network === "tcp" && (
+                          <HStack>
+                            <FormControl>
+                              <FormLabel>{t("pages.outbound.tcpHeader", "Header")}</FormLabel>
+                              <Select size="sm" {...register("tcpType")}>
+                                <option value="none">none</option>
+                                <option value="http">http</option>
+                              </Select>
+                            </FormControl>
+                            {tcpType === "http" && (
+                              <>
+                                <FormControl>
+                                  <FormLabel>{t("host")}</FormLabel>
+                                  <Input size="sm" {...register("tcpHost")} />
+                                </FormControl>
+                                <FormControl>
+                                  <FormLabel>{t("path")}</FormLabel>
+                                  <Input size="sm" {...register("tcpPath")} />
+                                </FormControl>
+                              </>
+                            )}
+                          </HStack>
+                        )}
+                        {network === "ws" && (
+                          <HStack>
+                            <FormControl>
+                              <FormLabel>{t("host")}</FormLabel>
+                              <Input size="sm" {...register("wsHost")} />
+                            </FormControl>
+                            <FormControl>
+                              <FormLabel>{t("path")}</FormLabel>
+                              <Input size="sm" {...register("wsPath")} />
+                            </FormControl>
+                          </HStack>
+                        )}
+                        {network === "grpc" && (
                           <FormControl>
-                            <FormLabel>{t("pages.outbound.tcpHeader", "Header")}</FormLabel>
-                            <Select size="sm" {...register("tcpType")}>
-                              <option value="none">none</option>
-                              <option value="http">http</option>
-                            </Select>
+                            <FormLabel>{t("serviceName")}</FormLabel>
+                            <Input size="sm" {...register("grpcServiceName")} />
                           </FormControl>
-                          {tcpType === "http" && (
-                            <>
-                              <FormControl>
-                                <FormLabel>{t("host")}</FormLabel>
-                                <Input size="sm" {...register("tcpHost")} />
-                              </FormControl>
-                              <FormControl>
-                                <FormLabel>{t("path")}</FormLabel>
-                                <Input size="sm" {...register("tcpPath")} />
-                              </FormControl>
-                            </>
+                        )}
+                      </VStack>
+                    </Box>
+                  )}
+
+                  {canAnySecurity && (
+                    <Box>
+                      <Text fontWeight="semibold" mb={3}>
+                        {t("pages.outbound.security")}
+                      </Text>
+                        <HStack>
+                          {canTls && (
+                            <FormControl display="flex" alignItems="center">
+                              <FormLabel mb="0">TLS</FormLabel>
+                              <Switch
+                                size="sm"
+                                isChecked={tlsEnabled}
+                                isDisabled={!canTls}
+                                onChange={(event) => {
+                                  if (!canTls) return;
+                                  const checked = event.target.checked;
+                                  setValue("tlsEnabled", checked);
+                                  if (checked) {
+                                    setValue("realityEnabled", false);
+                                  }
+                                }}
+                              />
+                            </FormControl>
+                          )}
+                          {canReality && (
+                            <FormControl display="flex" alignItems="center">
+                              <FormLabel mb="0">Reality</FormLabel>
+                              <Switch
+                                size="sm"
+                                isChecked={realityEnabled}
+                                isDisabled={!canReality}
+                                onChange={(event) => {
+                                  if (!canReality) return;
+                                  const checked = event.target.checked;
+                                  setValue("realityEnabled", checked);
+                                  if (checked) {
+                                    setValue("tlsEnabled", false);
+                                  }
+                                }}
+                              />
+                            </FormControl>
                           )}
                         </HStack>
-                      )}
-                      {network === "ws" && (
-                        <HStack>
-                          <FormControl>
-                            <FormLabel>{t("host")}</FormLabel>
-                            <Input size="sm" {...register("wsHost")} />
+                        {tlsEnabled && canTls && (
+                          <FormControl mt={3}>
+                            <FormLabel>SNI</FormLabel>
+                            <Input size="sm" placeholder="example.com" {...register("tlsServerName")} />
                           </FormControl>
-                          <FormControl>
-                            <FormLabel>{t("path")}</FormLabel>
-                            <Input size="sm" {...register("wsPath")} />
-                          </FormControl>
-                        </HStack>
-                      )}
-                      {network === "grpc" && (
-                        <FormControl>
-                          <FormLabel>{t("serviceName")}</FormLabel>
-                          <Input size="sm" {...register("grpcServiceName")} />
-                        </FormControl>
-                      )}
-                    </VStack>
-                  </Box>
+                        )}
+                        {realityEnabled && canReality && (
+                          <VStack spacing={3} align="stretch" mt={3}>
+                            <FormControl>
+                              <FormLabel>SNI</FormLabel>
+                              <Input size="sm" {...register("tlsServerName")} />
+                            </FormControl>
+                            <FormControl>
+                              <FormLabel>{t("pages.outbound.publicKey")}</FormLabel>
+                              <Input size="sm" {...register("realityPublicKey")} />
+                            </FormControl>
+                            <FormControl>
+                              <FormLabel>{t("pages.outbound.shortId")}</FormLabel>
+                              <Input size="sm" {...register("realityShortId")} />
+                            </FormControl>
+                          </VStack>
+                        )}
+                    </Box>
+                  )}
 
-                  <Box>
-                    <Text fontWeight="semibold" mb={3}>
-                      {t("pages.outbound.security")}
-                    </Text>
-                    <HStack>
+                  {canMux && (
+                    <Box>
+                      <Text fontWeight="semibold" mb={3}>
+                        {t("pages.outbound.mux")}
+                      </Text>
                       <FormControl display="flex" alignItems="center">
-                        <FormLabel mb="0">TLS</FormLabel>
-                        <Switch
-                          size="sm"
-                          isChecked={tlsEnabled}
-                          onChange={(event) => {
-                            const checked = event.target.checked;
-                            setValue("tlsEnabled", checked);
-                            if (checked) {
-                              setValue("realityEnabled", false);
-                            }
-                          }}
-                        />
+                        <FormLabel mb="0">{t("pages.outbound.enableMux")}</FormLabel>
+                        <Switch size="sm" {...register("muxEnabled")} />
                       </FormControl>
-                      <FormControl display="flex" alignItems="center">
-                        <FormLabel mb="0">Reality</FormLabel>
-                        <Switch
-                          size="sm"
-                          isChecked={realityEnabled}
-                          onChange={(event) => {
-                            const checked = event.target.checked;
-                            setValue("realityEnabled", checked);
-                            if (checked) {
-                              setValue("tlsEnabled", false);
-                            }
-                          }}
-                        />
-                      </FormControl>
-                    </HStack>
-                    {tlsEnabled && (
-                      <FormControl mt={3}>
-                        <FormLabel>SNI</FormLabel>
-                        <Input size="sm" placeholder="example.com" {...register("tlsServerName")} />
-                      </FormControl>
-                    )}
-                    {realityEnabled && (
-                      <VStack spacing={3} align="stretch" mt={3}>
-                        <FormControl>
-                          <FormLabel>SNI</FormLabel>
-                          <Input size="sm" {...register("tlsServerName")} />
+                      {muxEnabled && (
+                        <FormControl mt={3}>
+                          <FormLabel>{t("pages.outbound.concurrency")}</FormLabel>
+                          <Input size="sm" type="number" {...register("muxConcurrency", { valueAsNumber: true })} />
                         </FormControl>
-                        <FormControl>
-                          <FormLabel>{t("pages.outbound.publicKey")}</FormLabel>
-                          <Input size="sm" {...register("realityPublicKey")} />
-                        </FormControl>
-                        <FormControl>
-                          <FormLabel>{t("pages.outbound.shortId")}</FormLabel>
-                          <Input size="sm" {...register("realityShortId")} />
-                        </FormControl>
-                      </VStack>
-                    )}
-                  </Box>
-
-                  <Box>
-                    <Text fontWeight="semibold" mb={3}>
-                      {t("pages.outbound.mux")}
-                    </Text>
-                    <FormControl display="flex" alignItems="center">
-                      <FormLabel mb="0">{t("pages.outbound.enableMux")}</FormLabel>
-                      <Switch size="sm" {...register("muxEnabled")} />
-                    </FormControl>
-                    {muxEnabled && (
-                      <FormControl mt={3}>
-                        <FormLabel>{t("pages.outbound.concurrency")}</FormLabel>
-                        <Input size="sm" type="number" {...register("muxConcurrency", { valueAsNumber: true })} />
-                      </FormControl>
-                    )}
-                  </Box>
+                      )}
+                    </Box>
+                  )}
                 </VStack>
               </TabPanel>
               <TabPanel>

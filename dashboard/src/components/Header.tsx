@@ -1,5 +1,4 @@
 import {
-  Box,
   Button,
   chakra,
   Divider,
@@ -9,6 +8,7 @@ import {
   MenuButton,
   MenuItem,
   MenuList,
+  Portal,
   Popover,
   PopoverArrow,
   PopoverBody,
@@ -30,7 +30,7 @@ import {
   CheckIcon,
 } from "@heroicons/react/24/outline";
 import { useDashboard } from "contexts/DashboardContext";
-import { FC, ReactNode } from "react";
+import { FC, ReactNode, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { GitHubStars } from "./GitHubStars";
@@ -62,6 +62,7 @@ const LanguageIconStyled = chakra(LanguageIcon, iconProps);
 export const Header: FC<HeaderProps> = ({ actions }) => {
   const { userData, getUserIsSuccess, getUserIsPending } = useGetUser();
   const { t, i18n } = useTranslation();
+  const actionsContentRef = useRef<HTMLDivElement | null>(null);
 
   const sectionAccess = userData.permissions?.sections;
   const canAccessHosts = Boolean(sectionAccess?.[AdminSection.Hosts]);
@@ -184,66 +185,74 @@ export const Header: FC<HeaderProps> = ({ actions }) => {
               }
             />
           </PopoverTrigger>
-          <PopoverContent w={{ base: "90vw", sm: "56" }}>
-            <PopoverArrow />
-            <PopoverBody>
-              <Stack spacing={2}>
-                <Menu placement="left-start">
-                  <MenuButton
-                    as={Button}
-                    justifyContent="space-between"
-                    rightIcon={<LanguageIconStyled />}
-                    variant="ghost"
+          <Portal>
+            <PopoverContent ref={actionsContentRef} w={{ base: "90vw", sm: "56" }}>
+              <PopoverArrow />
+              <PopoverBody>
+                <Stack spacing={2}>
+                  <Menu placement="left-start">
+                    <MenuButton
+                      as={Button}
+                      justifyContent="space-between"
+                      rightIcon={<LanguageIconStyled />}
+                      variant="ghost"
+                    >
+                      {t("header.language", "Language")}
+                    </MenuButton>
+                    <Portal containerRef={actionsContentRef}>
+                      <MenuList minW={{ base: "100%", sm: "200px" }}>
+                        {languageItems.map(({ code, label, flag }) => {
+                          const isActiveLang = i18n.language === code;
+                          return (
+                            <MenuItem
+                              key={code}
+                              onClick={() => {
+                                changeLanguage(code);
+                                actionsMenu.onClose();
+                              }}
+                            >
+                              <HStack justify="space-between" w="full">
+                                <HStack spacing={2}>
+                                  {code === "fa" ? (
+                                    <ImperialIranFlag style={{ width: "16px", height: "12px" }} />
+                                  ) : (
+                                    <ReactCountryFlag
+                                      countryCode={flag}
+                                      svg
+                                      style={{ width: "16px", height: "12px" }}
+                                    />
+                                  )}
+                                  <Text>{label}</Text>
+                                </HStack>
+                                {isActiveLang && <CheckIcon width={16} />}
+                              </HStack>
+                            </MenuItem>
+                          );
+                        })}
+                      </MenuList>
+                    </Portal>
+                  </Menu>
+                  <Divider />
+                  <ThemeSelector
+                    trigger="menu"
+                    triggerLabel={t("header.theme", "Theme")}
+                    portalContainer={actionsContentRef}
+                  />
+                  <Divider />
+                  <Button
+                    colorScheme="red"
+                    leftIcon={<LogoutIcon />}
+                    justifyContent="flex-start"
+                    as={Link}
+                    to="/login"
+                    onClick={actionsMenu.onClose}
                   >
-                    {t("header.language", "Language")}
-                  </MenuButton>
-                  <MenuList minW={{ base: "100%", sm: "200px" }}>
-                    {languageItems.map(({ code, label, flag }) => {
-                      const isActiveLang = i18n.language === code;
-                      return (
-                        <MenuItem
-                          key={code}
-                          onClick={() => {
-                            changeLanguage(code);
-                            actionsMenu.onClose();
-                          }}
-                        >
-                          <HStack justify="space-between" w="full">
-                            <HStack spacing={2}>
-                              {code === "fa" ? (
-                                <ImperialIranFlag style={{ width: "16px", height: "12px" }} />
-                              ) : (
-                                <ReactCountryFlag
-                                  countryCode={flag}
-                                  svg
-                                  style={{ width: "16px", height: "12px" }}
-                                />
-                              )}
-                              <Text>{label}</Text>
-                            </HStack>
-                            {isActiveLang && <CheckIcon width={16} />}
-                          </HStack>
-                        </MenuItem>
-                      );
-                    })}
-                  </MenuList>
-                </Menu>
-                <Divider />
-                <ThemeSelector trigger="menu" triggerLabel={t("header.theme", "Theme")} />
-                <Divider />
-                <Button
-                  colorScheme="red"
-                  leftIcon={<LogoutIcon />}
-                  justifyContent="flex-start"
-                  as={Link}
-                  to="/login"
-                  onClick={actionsMenu.onClose}
-                >
-                  {t("header.logout")}
-                </Button>
-              </Stack>
-            </PopoverBody>
-          </PopoverContent>
+                    {t("header.logout")}
+                  </Button>
+                </Stack>
+              </PopoverBody>
+            </PopoverContent>
+          </Portal>
         </Popover>
       </HStack>
     </HStack>
