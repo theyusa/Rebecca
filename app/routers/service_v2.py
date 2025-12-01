@@ -428,8 +428,23 @@ def get_service_users(
         query = query.limit(limit)
 
     users = query.all()
+    try:
+        from app.services.panel_settings import PanelSettingsService
+        from app.utils.subscription_links import build_subscription_links
+
+        preferred = PanelSettingsService.get_settings(ensure_record=True).default_subscription_type
+        user_responses = []
+        for user in users:
+            resp = UserResponse.model_validate(user)
+            links = build_subscription_links(resp, preferred=preferred)
+            resp.subscription_url = links.get("primary") or resp.subscription_url
+            resp.subscription_urls = {k: v for k, v in links.items() if k != "primary"}
+            user_responses.append(resp)
+    except Exception:
+        user_responses = [UserResponse.model_validate(user) for user in users]
+
     return UsersResponse(
-        users=[UserResponse.model_validate(user) for user in users],
+        users=user_responses,
         total=total,
     )
 

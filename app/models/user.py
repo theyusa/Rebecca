@@ -19,6 +19,16 @@ from app.utils.credentials import (
 from xray_api.types.account import Account
 from app.utils.jwt import create_subscription_token
 from config import XRAY_SUBSCRIPTION_PATH, XRAY_SUBSCRIPTION_URL_PREFIX
+from enum import Enum
+
+# Fallback import to avoid deployment breakage when settings model isn't updated yet
+try:  # pragma: no cover
+    from app.models.settings import SubscriptionLinkType
+except Exception:  # pragma: no cover - defensive
+    class SubscriptionLinkType(str, Enum):
+        username_key = "username-key"
+        key = "key"
+        token = "token"
 
 USERNAME_REGEXP = re.compile(r"^(?=\w{3,32}\b)[a-zA-Z0-9-_@.]+(?:_[a-zA-Z0-9-_@.]+)*$")
 
@@ -481,6 +491,7 @@ class UserResponse(User):
     created_at: datetime
     links: List[str] = []
     subscription_url: str = ""
+    subscription_urls: Dict[str, str] = Field(default_factory=dict)
     proxies: dict
     excluded_inbounds: Dict[ProxyTypes, List[str]] = {}
     service_id: int | None = None
@@ -505,18 +516,49 @@ class UserResponse(User):
     def validate_subscription_url(self):
         if _skip_expensive_computations.get():
             return self
+        salt = secrets.token_hex(8)
+        url_prefix = (XRAY_SUBSCRIPTION_URL_PREFIX).replace("*", salt)
+
+        links: Dict[str, str] = {}
         if self.credential_key:
-            salt = secrets.token_hex(8)
-            url_prefix = (XRAY_SUBSCRIPTION_URL_PREFIX).replace('*', salt)
-            self.subscription_url = (
-                f"{url_prefix}/{XRAY_SUBSCRIPTION_PATH}/{self.credential_key}"
-            )
+            links["username-key"] = f"{url_prefix}/{XRAY_SUBSCRIPTION_PATH}/{self.username}/{self.credential_key}"
+            links["key"] = f"{url_prefix}/{XRAY_SUBSCRIPTION_PATH}/{self.credential_key}"
+
+        token = create_subscription_token(self.username)
+        links["token"] = f"{url_prefix}/{XRAY_SUBSCRIPTION_PATH}/{token}"
+
+        self.subscription_urls = links
+
+        # Lazy import to avoid circular import during Alembic/env loading
+        try:
+            from app.services.panel_settings import PanelSettingsService
+            settings = PanelSettingsService.get_settings(ensure_record=True)
+            preferred: str = settings.default_subscription_type or SubscriptionLinkType.key.value
+        except Exception:
+            preferred = SubscriptionLinkType.key.value
+
+        order_map = {
+            SubscriptionLinkType.username_key.value: ["username-key", "token", "key"],
+            SubscriptionLinkType.key.value: ["key", "token", "username-key"],
+            SubscriptionLinkType.token.value: ["token", "key", "username-key"],
+        }
+
+        chosen = None
+        for candidate in order_map.get(preferred, ["key", "username-key", "token"]):
+            if candidate in links:
+                chosen = candidate
+                break
+        if chosen is None and links:
+            chosen = next(iter(links.keys()))
+
+        if chosen:
+            self.subscription_url = links[chosen]
         else:
-            if not self.subscription_url:
-                salt = secrets.token_hex(8)
-                url_prefix = (XRAY_SUBSCRIPTION_URL_PREFIX).replace('*', salt)
-                token = create_subscription_token(self.username)
-                self.subscription_url = f"{url_prefix}/{XRAY_SUBSCRIPTION_PATH}/{token}"
+            self.subscription_url = ""
+
+        # Preserve legacy field for compatibility
+        if self.credential_key:
+            self.key_subscription_url = links.get("key")  # type: ignore[attr-defined]
         return self
 
     @model_validator(mode="after")
@@ -524,11 +566,8 @@ class UserResponse(User):
         if _skip_expensive_computations.get():
             return self
         if self.credential_key and not hasattr(self, 'key_subscription_url'):
-            salt = secrets.token_hex(8)
-            url_prefix = (XRAY_SUBSCRIPTION_URL_PREFIX).replace('*', salt)
-            self.key_subscription_url = (
-                f"{url_prefix}/{XRAY_SUBSCRIPTION_PATH}/{self.credential_key}"
-            )
+            # Already handled in validate_subscription_url, keep compatibility no-op
+            pass
         return self
 
     @model_validator(mode="after")

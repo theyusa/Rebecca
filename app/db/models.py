@@ -95,6 +95,12 @@ class PanelSettings(Base):
 
     id = Column(Integer, primary_key=True)
     use_nobetci = Column(Boolean, nullable=False, default=False, server_default=text("0"))
+    default_subscription_type = Column(
+        String(32),
+        nullable=False,
+        default="key",
+        server_default=text("'key'"),
+    )
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

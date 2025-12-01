@@ -10,6 +10,7 @@ import {
   Heading,
   HStack,
   Input,
+  Select,
   SimpleGrid,
   Spinner,
   Stack,
@@ -467,10 +468,14 @@ export const IntegrationSettingsPage = () => {
   }, [activeMaintenanceAction]);
 
   const [panelUseNobetci, setPanelUseNobetci] = useState<boolean>(panelData?.use_nobetci ?? false);
+  const [panelDefaultSubType, setPanelDefaultSubType] = useState<"username-key" | "key" | "token">(
+    panelData?.default_subscription_type ?? "key"
+  );
 
   useEffect(() => {
     if (panelData) {
       setPanelUseNobetci(panelData.use_nobetci);
+      setPanelDefaultSubType(panelData.default_subscription_type ?? "key");
     }
   }, [panelData]);
 
@@ -586,6 +591,7 @@ export const IntegrationSettingsPage = () => {
   const panelMutation = useMutation(updatePanelSettings, {
     onSuccess: (updated) => {
       setPanelUseNobetci(updated.use_nobetci);
+      setPanelDefaultSubType(updated.default_subscription_type ?? "key");
       queryClient.setQueryData("panel-settings", updated);
       toast({
         title: t("settings.panel.saved"),
@@ -676,11 +682,11 @@ export const IntegrationSettingsPage = () => {
                     justify="space-between"
                     align={{ base: "flex-start", md: "center" }}
                     gap={4}
-                    flexDirection={{ base: "column", md: "row" }}
-                  >
-                    <Box>
-                      <Heading size="sm" mb={1}>
-                        {t("settings.panel.useNobetciTitle")}
+                      flexDirection={{ base: "column", md: "row" }}
+                    >
+                      <Box>
+                        <Heading size="sm" mb={1}>
+                          {t("settings.panel.useNobetciTitle")}
                       </Heading>
                       <Text fontSize="sm" color="gray.500">
                         {t("settings.panel.useNobetciDescription")}
@@ -691,6 +697,43 @@ export const IntegrationSettingsPage = () => {
                       onChange={(event) => setPanelUseNobetci(event.target.checked)}
                       isDisabled={panelMutation.isLoading || isPanelLoading}
                     />
+                  </Flex>
+                </Box>
+                <Box borderWidth="1px" borderRadius="lg" p={4}>
+                  <Flex
+                    justify="space-between"
+                    align={{ base: "flex-start", md: "center" }}
+                    gap={4}
+                    flexDirection={{ base: "column", md: "row" }}
+                  >
+                    <Box>
+                      <Heading size="sm" mb={1}>
+                        {t("settings.panel.defaultSubscriptionType", "Default subscription link format")}
+                      </Heading>
+                      <Text fontSize="sm" color="gray.500">
+                        {t(
+                          "settings.panel.defaultSubscriptionTypeDescription",
+                          "Choose which subscription link format is shown by default. All formats remain valid."
+                        )}
+                      </Text>
+                    </Box>
+                    <FormControl maxW={{ base: "full", md: "240px" }}>
+                      <FormLabel fontSize="sm" mb={1}>
+                        {t("settings.panel.defaultSubscriptionTypeLabel", "Default link format")}
+                      </FormLabel>
+                      <Select
+                        size="sm"
+                        value={panelDefaultSubType}
+                        onChange={(event) =>
+                          setPanelDefaultSubType(event.target.value as "username-key" | "key" | "token")
+                        }
+                        isDisabled={panelMutation.isLoading || isPanelLoading}
+                      >
+                        <option value="username-key">{t("settings.panel.link.usernameKey", "username/key")}</option>
+                        <option value="key">{t("settings.panel.link.keyOnly", "key only")}</option>
+                        <option value="token">{t("settings.panel.link.token", "token")}</option>
+                      </Select>
+                    </FormControl>
                   </Flex>
                 </Box>
                 <Box borderWidth="1px" borderRadius="lg" p={4}>
@@ -802,12 +845,18 @@ export const IntegrationSettingsPage = () => {
                   <Button
                     colorScheme="primary"
                     leftIcon={<SaveIcon />}
-                    onClick={() => panelMutation.mutate({ use_nobetci: panelUseNobetci })}
+                    onClick={() =>
+                      panelMutation.mutate({
+                        use_nobetci: panelUseNobetci,
+                        default_subscription_type: panelDefaultSubType,
+                      })
+                    }
                     isLoading={panelMutation.isLoading}
                     isDisabled={
                       panelMutation.isLoading ||
                       panelData === undefined ||
-                      panelUseNobetci === panelData.use_nobetci
+                      (panelUseNobetci === panelData.use_nobetci &&
+                        panelDefaultSubType === (panelData.default_subscription_type ?? "key"))
                     }
                   >
                     {t("settings.save")}

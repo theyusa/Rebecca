@@ -2,6 +2,13 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from enum import Enum
+
+
+class SubscriptionLinkType(str, Enum):
+    username_key = "username-key"
+    key = "key"
+    token = "token"
 
 class TelegramTopicSettings(BaseModel):
     title: str = Field(..., description="Display title for the forum topic")
@@ -57,7 +64,9 @@ class TelegramSettingsUpdate(BaseModel):
 
 class PanelSettingsResponse(BaseModel):
     use_nobetci: bool = False
+    default_subscription_type: SubscriptionLinkType = SubscriptionLinkType.key
 
 
 class PanelSettingsUpdate(BaseModel):
     use_nobetci: Optional[bool] = None
+    default_subscription_type: Optional[SubscriptionLinkType] = None

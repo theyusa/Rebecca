@@ -21,6 +21,7 @@ from app.models.user import (
 )
 from app.utils import report, responses
 from app.utils.credentials import ensure_user_credential_key
+from app.utils.subscription_links import build_subscription_links
 from app import runtime
 from app.runtime import logger
 
@@ -318,7 +319,20 @@ def get_users(
             return_with_count=True,
         )
         
-        user_responses = [UserResponse.model_validate(user) for user in users]
+        user_responses = []
+        try:
+            # Get preferred subscription type once
+            from app.services.panel_settings import PanelSettingsService
+            preferred = PanelSettingsService.get_settings(ensure_record=True).default_subscription_type
+        except Exception:
+            preferred = None
+
+        for user in users:
+            resp = UserResponse.model_validate(user)
+            links = build_subscription_links(resp, preferred=preferred)
+            resp.subscription_url = links.get("primary") or resp.subscription_url
+            resp.subscription_urls = {k: v for k, v in links.items() if k != "primary"}
+            user_responses.append(resp)
     finally:
         _skip_expensive_computations.reset(token)
 

@@ -2027,8 +2027,17 @@ def update_user(
     Returns:
         User: The updated user object.
     """
+    # Preserve credential_key during modify operations unless handled by explicit revoke flows.
+    # If the user never had a credential_key, ignore any inbound credential_key in the payload
+    # and avoid auto-generating credentials.
     original_status_value = _status_to_str(dbuser.status)
-    credential_key = dbuser.credential_key
+    credential_key = dbuser.credential_key if dbuser.credential_key else None
+    if credential_key is None:
+        # Ensure any provided credential_key on modify is ignored
+        try:
+            modify.credential_key = None  # type: ignore[attr-defined]
+        except Exception:
+            pass
     added_proxies: Dict[ProxyTypes, Proxy] = {}
 
     if modify.proxies:

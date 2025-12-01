@@ -32,50 +32,98 @@ def _ensure_service_visibility(service, admin: Admin):
 
 @router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def add_user_with_service(
-    payload: UserServiceCreate,
+    payload: dict,
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
     admin: Admin = Depends(Admin.require_active),
 ):
-    service = crud.get_service(db, payload.service_id)
-    if not service:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
-
-    _ensure_service_visibility(service, admin)
-
-    db_admin = crud.get_admin(db, admin.username)
-    if not db_admin:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin not found")
-
-    allowed_inbounds = crud.get_service_allowed_inbounds(service)
-    if not allowed_inbounds:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Service does not have any active hosts")
-
-    proxies_payload = {proxy_type.value: {} for proxy_type in allowed_inbounds.keys()}
-    inbounds_payload = {
-        proxy_type.value: sorted(list(tags))
-        for proxy_type, tags in allowed_inbounds.items()
-    }
-
-    user_payload = payload.model_dump(exclude={"service_id"}, exclude_none=True)
-    user_payload["proxies"] = proxies_payload
-    user_payload["inbounds"] = inbounds_payload
-
+    """
+    Create user. Supports both service-scoped creation (with service_id) and legacy creation without service.
+    """
     admin.ensure_user_permission(UserPermission.create)
+
+    if payload.get("service_id") is not None:
+        # Service-scoped creation (existing behavior)
+        try:
+            service_payload = UserServiceCreate.model_validate(payload)
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+        service = crud.get_service(db, service_payload.service_id)
+        if not service:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
+
+        _ensure_service_visibility(service, admin)
+
+        db_admin = crud.get_admin(db, admin.username)
+        if not db_admin:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin not found")
+
+        allowed_inbounds = crud.get_service_allowed_inbounds(service)
+        if not allowed_inbounds:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Service does not have any active hosts")
+
+        proxies_payload = {proxy_type.value: {} for proxy_type in allowed_inbounds.keys()}
+        inbounds_payload = {
+            proxy_type.value: sorted(list(tags))
+            for proxy_type, tags in allowed_inbounds.items()
+        }
+
+        user_payload = service_payload.model_dump(exclude={"service_id"}, exclude_none=True)
+        user_payload["proxies"] = proxies_payload
+        user_payload["inbounds"] = inbounds_payload
+
+        try:
+            user_data = UserCreate.model_validate(user_payload)
+            admin.ensure_user_constraints(
+                status_value=user_data.status.value if user_data.status else None,
+                data_limit=user_data.data_limit,
+                expire=user_data.expire,
+                next_plan=user_data.next_plan.model_dump() if user_data.next_plan else None,
+            )
+            ensure_user_credential_key(user_data)
+            dbuser = crud.create_user(
+                db,
+                user_data,
+                admin=db_admin,
+                service=service,
+            )
+        except UsersLimitReachedError as exc:
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists")
+
+        bg.add_task(xray.operations.add_user, dbuser=dbuser)
+        user = UserResponse.model_validate(dbuser)
+        report.user_created(user=user, user_id=dbuser.id, by=admin, user_admin=dbuser.admin)
+        logger.info(f'New user "{dbuser.username}" added via service {service.name}')
+        return user
+
+    # Legacy/no-service creation path
     try:
-        user_data = UserCreate.model_validate(user_payload)
+        user_data = UserCreate.model_validate(payload)
         admin.ensure_user_constraints(
             status_value=user_data.status.value if user_data.status else None,
             data_limit=user_data.data_limit,
             expire=user_data.expire,
             next_plan=user_data.next_plan.model_dump() if user_data.next_plan else None,
         )
+        for proxy_type in user_data.proxies:
+            if not xray.config.inbounds_by_protocol.get(proxy_type):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Protocol {proxy_type} is disabled on your server",
+                )
         ensure_user_credential_key(user_data)
         dbuser = crud.create_user(
             db,
             user_data,
-            admin=db_admin,
-            service=service,
+            admin=crud.get_admin(db, admin.username),
         )
     except UsersLimitReachedError as exc:
         db.rollback()
@@ -90,7 +138,7 @@ def add_user_with_service(
     bg.add_task(xray.operations.add_user, dbuser=dbuser)
     user = UserResponse.model_validate(dbuser)
     report.user_created(user=user, user_id=dbuser.id, by=admin, user_admin=dbuser.admin)
-    logger.info(f'New user "{dbuser.username}" added via service {service.name}')
+    logger.info(f'New user "{dbuser.username}" added')
     return user
 
 

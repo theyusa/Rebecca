@@ -684,6 +684,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
     control: form.control,
     name: "manual_key_entry",
   });
+  const hasExistingKey = Boolean(editingUser?.credential_key);
 
   const expireInitialValue = form.getValues("expire");
 
@@ -2456,58 +2457,62 @@ export const UserDialog: FC<UserDialogProps> = () => {
                 )}
 
                 <GridItem colSpan={{ base: 1, md: showServiceSelector ? 2 : 1 }}>
-                  <FormControl display="flex" alignItems="center" justifyContent="space-between">
-                    <FormLabel mb={0}>
-                      {t(
-                        "userDialog.allowManualKeyEntry",
-                        "Allow custom credential key entry"
-                      )}
-                    </FormLabel>
-                    <Controller
-                      name="manual_key_entry"
-                      control={form.control}
-                      render={({ field }) => (
-                        <Switch
-                          size="sm"
-                          colorScheme="primary"
-                          isChecked={field.value}
-                          onChange={(event) => field.onChange(event.target.checked)}
-                          isDisabled={disabled}
+                  {hasExistingKey && (
+                    <>
+                      <FormControl display="flex" alignItems="center" justifyContent="space-between">
+                        <FormLabel mb={0}>
+                          {t(
+                            "userDialog.allowManualKeyEntry",
+                            "Allow custom credential key entry"
+                          )}
+                        </FormLabel>
+                        <Controller
+                          name="manual_key_entry"
+                          control={form.control}
+                          render={({ field }) => (
+                            <Switch
+                              size="sm"
+                              colorScheme="primary"
+                              isChecked={field.value}
+                              onChange={(event) => field.onChange(event.target.checked)}
+                              isDisabled={disabled}
+                            />
+                          )}
                         />
-                      )}
-                    />
-                  </FormControl>
-                  {manualKeyEntryEnabled && (
-                    <FormControl
-                      mt={4}
-                      isInvalid={Boolean(form.formState.errors.credential_key)}
-                    >
-                      <FormLabel>
-                        {t("userDialog.credentialKeyLabel", "Credential key")}
-                      </FormLabel>
-                      <Controller
-                        name="credential_key"
-                        control={form.control}
-                        render={({ field }) => (
-                          <ChakraInput
-                            placeholder="35e4e39c7d5c4f4b8b71558e4f37ff53"
-                            maxLength={32}
-                            value={field.value ?? ""}
-                            onChange={(event) => field.onChange(event.target.value)}
-                            isDisabled={disabled}
+                      </FormControl>
+                      {manualKeyEntryEnabled && (
+                        <FormControl
+                          mt={4}
+                          isInvalid={Boolean(form.formState.errors.credential_key)}
+                        >
+                          <FormLabel>
+                            {t("userDialog.credentialKeyLabel", "Credential key")}
+                          </FormLabel>
+                          <Controller
+                            name="credential_key"
+                            control={form.control}
+                            render={({ field }) => (
+                              <ChakraInput
+                                placeholder="35e4e39c7d5c4f4b8b71558e4f37ff53"
+                                maxLength={32}
+                                value={field.value ?? ""}
+                                onChange={(event) => field.onChange(event.target.value)}
+                                isDisabled={disabled}
+                              />
+                            )}
                           />
-                        )}
-                      />
-                      <FormHelperText>
-                        {t(
-                          "userDialog.manualKeyHelper",
-                          "Enter a 32-character hexadecimal credential key."
-                        )}
-                      </FormHelperText>
-                      <FormErrorMessage>
-                        {form.formState.errors.credential_key?.message}
-                      </FormErrorMessage>
-                    </FormControl>
+                          <FormHelperText>
+                            {t(
+                              "userDialog.manualKeyHelper",
+                              "Enter a 32-character hexadecimal credential key."
+                            )}
+                          </FormHelperText>
+                          <FormErrorMessage>
+                            {form.formState.errors.credential_key?.message}
+                          </FormErrorMessage>
+                        </FormControl>
+                      )}
+                    </>
                   )}
                 </GridItem>
 

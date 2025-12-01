@@ -44,10 +44,12 @@ export const updateTelegramSettings = async (
 
 export interface PanelSettingsResponse {
   use_nobetci: boolean;
+  default_subscription_type: "username-key" | "key" | "token";
 }
 
 export interface PanelSettingsUpdatePayload {
   use_nobetci?: boolean;
+  default_subscription_type?: "username-key" | "key" | "token";
 }
 
 export const getPanelSettings = async (): Promise<PanelSettingsResponse> => {
