@@ -11,7 +11,6 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from app.db.models import User, Proxy
 from app.models.proxy import ProxyTypes
 from app.utils.credentials import runtime_proxy_settings
 
@@ -24,31 +23,60 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
-    session = Session(bind=bind)
+    metadata = sa.MetaData()
+    metadata.reflect(bind=bind, only=("users", "proxies"))
 
+    users_table = metadata.tables.get("users")
+    proxies_table = metadata.tables.get("proxies")
+    if users_table is None or proxies_table is None:
+        return
+
+    session = Session(bind=bind)
     try:
-        keyed_users = session.query(User).filter(User.credential_key.isnot(None)).all()
-        for user in keyed_users:
-            proxies = session.query(Proxy).filter(Proxy.user_id == user.id).all()
-            for proxy in proxies:
-                proxy_type = proxy.type
-                if not proxy_type:
+        keyed_users = session.execute(
+            sa.select(
+                users_table.c.id,
+                users_table.c.credential_key,
+            ).where(users_table.c.credential_key.isnot(None))
+        ).all()
+
+        for user_row in keyed_users:
+            user_id = user_row.id
+            credential_key = user_row.credential_key
+            if not credential_key:
+                continue
+
+            proxy_rows = session.execute(
+                sa.select(
+                    proxies_table.c.id,
+                    proxies_table.c.type,
+                    proxies_table.c.settings,
+                ).where(proxies_table.c.user_id == user_id)
+            ).all()
+
+            for proxy_row in proxy_rows:
+                proxy_type_val = proxy_row.type
+                try:
+                    proxy_type = proxy_type_val if isinstance(proxy_type_val, ProxyTypes) else ProxyTypes(proxy_type_val)
+                except Exception:
                     continue
-                # Work on a copy of settings and strip credential fields so we force regeneration
-                settings_data = dict(proxy.settings or {})
+
+                settings_data = dict(proxy_row.settings or {})
                 for cred_key in ("id", "uuid", "password"):
-                    if cred_key in settings_data:
-                        settings_data.pop(cred_key, None)
+                    settings_data.pop(cred_key, None)
 
                 try:
                     runtime_settings = runtime_proxy_settings(
-                        settings_data, proxy_type, user.credential_key
+                        settings_data, proxy_type, credential_key
                     )
                 except Exception:
                     continue
 
-                # Persist updated id/password back to JSON settings
-                proxy.settings = runtime_settings
+                session.execute(
+                    proxies_table.update()
+                    .where(proxies_table.c.id == proxy_row.id)
+                    .values(settings=runtime_settings)
+                )
         session.commit()
     finally:
         session.close()

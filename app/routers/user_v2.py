@@ -230,7 +230,6 @@ def modify_user_with_service(
         next_plan=modified_user.next_plan.model_dump() if modified_user.next_plan else None,
     )
     if "flow" in modified_user.model_fields_set:
-        has_flow_value = bool(modified_user.flow)
         if admin.role not in (AdminRole.sudo, AdminRole.full_access):
             if not admin.permissions.users.set_flow:
                 raise HTTPException(
