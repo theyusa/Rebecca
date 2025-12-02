@@ -68,7 +68,22 @@ def _ensure_service_visibility(service: Service, admin: Admin) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You're not allowed")
 
 
-def _service_to_summary(service: Service, *, host_count: int, user_count: int) -> ServiceBase:
+def _valid_hosts_for_service(service: Service) -> List:
+    inbound_map = xray.config.inbounds_by_tag
+    valid = []
+    for link in service.host_links:
+        host = link.host
+        if not host or host.is_disabled:
+            continue
+        if host.inbound_tag not in inbound_map:
+            continue
+        valid.append((host, link))
+    return valid
+
+
+def _service_to_summary(service: Service, *, user_count: int) -> ServiceBase:
+    valid_hosts = _valid_hosts_for_service(service)
+    host_count = len(valid_hosts)
     return ServiceBase(
         id=service.id,
         name=service.name,
@@ -77,15 +92,15 @@ def _service_to_summary(service: Service, *, host_count: int, user_count: int) -
         lifetime_used_traffic=int(service.lifetime_used_traffic or 0),
         host_count=host_count,
         user_count=user_count,
+        has_hosts=host_count > 0,
+        broken=host_count == 0,
     )
 
 
 def _service_to_detail(db: Session, service: Service) -> ServiceDetail:
     hosts: List[ServiceHost] = []
-    for link in service.host_links:
-        host = link.host
-        if not host:
-            continue
+    valid_hosts = _valid_hosts_for_service(service)
+    for host, link in valid_hosts:
         inbound_info = xray.config.inbounds_by_tag.get(host.inbound_tag, {})
         hosts.append(
             ServiceHost(
@@ -118,7 +133,7 @@ def _service_to_detail(db: Session, service: Service) -> ServiceDetail:
         else 0
     )
 
-    return ServiceDetail(
+    detail = ServiceDetail(
         id=service.id,
         name=service.name,
         description=service.description,
@@ -130,7 +145,10 @@ def _service_to_detail(db: Session, service: Service) -> ServiceDetail:
         admins=admins,
         admin_ids=[link.admin_id for link in service.admin_links],
         host_ids=[link.host_id for link in service.host_links],
+        has_hosts=len(hosts) > 0,
+        broken=len(hosts) == 0,
     )
+    return detail
 
 
 @router.get("", response_model=ServiceListResponse)
@@ -148,12 +166,10 @@ def get_services(
         offset=offset,
         limit=limit,
     )
-    host_counts = data.get("host_counts", {})
     user_counts = data.get("user_counts", {})
     services = [
         _service_to_summary(
             service,
-            host_count=int(host_counts.get(service.id, 0)),
             user_count=int(user_counts.get(service.id, 0)),
         )
         for service in data["services"]

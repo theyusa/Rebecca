@@ -765,6 +765,11 @@ const ServicesPage: FC = () => {
                 <Text fontWeight="medium">{t("services.columns.hosts", "Hosts")}:</Text>
                 <Text fontWeight="semibold" color="gray.700" _dark={{ color: "gray.200" }}>
                   {service.host_count}
+                  {!service.has_hosts && (
+                    <Badge colorScheme="red" ml={2}>
+                      Broken
+                    </Badge>
+                  )}
                 </Text>
               </HStack>
               <HStack spacing={1}>
@@ -872,7 +877,14 @@ const ServicesPage: FC = () => {
           )}
         </VStack>
       </Td>
-      <Td>{service.host_count}</Td>
+      <Td>
+        {service.host_count}
+        {!service.has_hosts && (
+          <Badge colorScheme="red" ml={2}>
+            Broken
+          </Badge>
+        )}
+      </Td>
       <Td>{service.user_count}</Td>
       <Td>{formatBytes(service.used_traffic)}</Td>
       <Td>{formatBytes(service.lifetime_used_traffic)}</Td>

@@ -281,13 +281,14 @@ def process_inbounds_and_tags(
 
             # Get host list for this tag from host_map
             host_list = host_map.get(tag, []) if host_map else []
-            
-            
+
             sorted_host_list = sorted(
                 host_list,
                 key=lambda h: (h.get("sort", 0), h.get("id") or 0)
             )
             for position, host in enumerate(sorted_host_list):
+                if host.get("is_disabled"):
+                    continue
                 host_id = host.get("id")
                 host_entries.append(
                     (
@@ -313,6 +314,8 @@ def process_inbounds_and_tags(
     )
 
     for protocol, tag, settings, inbound, host, _, _, _ in host_entries:
+        if host.get("is_disabled"):
+            continue
         format_variables.update({"PROTOCOL": protocol.name})
         format_variables.update({"TRANSPORT": inbound["network"]})
         host_inbound = inbound.copy()
@@ -386,11 +389,16 @@ def process_inbounds_and_tags(
         else:
             proxy_type = protocol
 
-        runtime_settings = runtime_proxy_settings(
-            settings, proxy_type, credential_key
-        )
-
-        runtime_settings.pop("flow", None)
+        user_flow = extra_data.get("flow")
+        if user_flow:
+            runtime_settings = runtime_proxy_settings(
+                settings, proxy_type, credential_key, flow=user_flow
+            )
+        else:
+            # Call without flow to mirror server-side account generation when flow is absent
+            runtime_settings = runtime_proxy_settings(settings, proxy_type, credential_key)
+        if not user_flow:
+            runtime_settings.pop("flow", None)
         
         conf.add(
             remark=host["remark"].format_map(format_variables),

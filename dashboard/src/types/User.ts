@@ -16,7 +16,6 @@ export type ProxyType = {
   };
   vless?: {
     id?: string;
-    flow?: string;
   };
   trojan?: {
     password?: string;
@@ -48,6 +47,7 @@ export type User = {
   credential_key?: string | null;
   key_subscription_url?: string | null;
   proxies: ProxyType;
+  flow?: string | null;
   expire: number | null;
   data_limit: number | null;
   ip_limit: number | null;
@@ -81,6 +81,7 @@ export type UserCreate = Pick<
   | "username"
   | "status"
   | "note"
+  | "flow"
   | "credential_key"
 > & {
   next_plan?: NextPlan | null;
@@ -96,6 +97,7 @@ export type UserCreateWithService = Pick<
   | "data_limit_reset_strategy"
   | "on_hold_expire_duration"
   | "note"
+  | "flow"
 > & {
   service_id: number;
   auto_delete_in_days?: number | null;

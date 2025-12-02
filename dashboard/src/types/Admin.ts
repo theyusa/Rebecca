@@ -21,6 +21,8 @@ export enum UserPermissionToggle {
   AllowUnlimitedExpire = "allow_unlimited_expire",
   AllowNextPlan = "allow_next_plan",
   AdvancedActions = "advanced_actions",
+  SetFlow = "set_flow",
+  AllowCustomKey = "allow_custom_key",
 }
 
 export enum AdminManagementPermission {

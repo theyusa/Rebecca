@@ -614,7 +614,7 @@ class XRayConfig(dict):
                         try:
                             settings_obj = ProxySettings.from_dict(proxy_type_enum, settings.copy())
                             runtime_settings = runtime_proxy_settings(
-                                settings_obj, proxy_type_enum, credential_key
+                                settings_obj, proxy_type_enum, credential_key, flow=None
                             )
 
                             client_to_add = {"email": email, **runtime_settings}

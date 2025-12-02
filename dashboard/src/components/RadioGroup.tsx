@@ -385,7 +385,7 @@ const RadioCard: FC<
                   fontSize="xs"
                   size="sm"
                   borderRadius="6px"
-                  {...form.register("proxies.vless.flow")}
+                  {...form.register("flow")}
                 >
                   {XTLSFlows.map((entry) => (
                     <option key={entry.title} value={entry.value}>

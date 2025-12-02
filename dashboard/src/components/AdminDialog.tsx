@@ -56,6 +56,8 @@ const ROLE_PERMISSION_PRESETS: Record<AdminRole, AdminPermissions> = {
       allow_unlimited_expire: true,
       allow_next_plan: true,
       advanced_actions: true,
+       set_flow: false,
+       allow_custom_key: false,
       max_data_limit_per_user: null,
     },
     admin_management: {
@@ -89,6 +91,8 @@ const ROLE_PERMISSION_PRESETS: Record<AdminRole, AdminPermissions> = {
       allow_unlimited_expire: true,
       allow_next_plan: true,
       advanced_actions: true,
+       set_flow: false,
+       allow_custom_key: false,
       max_data_limit_per_user: null,
     },
     admin_management: {
@@ -122,6 +126,8 @@ const ROLE_PERMISSION_PRESETS: Record<AdminRole, AdminPermissions> = {
       allow_unlimited_expire: true,
       allow_next_plan: true,
       advanced_actions: true,
+       set_flow: true,
+       allow_custom_key: true,
       max_data_limit_per_user: null,
     },
     admin_management: {
@@ -155,6 +161,8 @@ const ROLE_PERMISSION_PRESETS: Record<AdminRole, AdminPermissions> = {
       allow_unlimited_expire: true,
       allow_next_plan: true,
       advanced_actions: true,
+       set_flow: true,
+       allow_custom_key: true,
       max_data_limit_per_user: null,
     },
     admin_management: {
@@ -196,6 +204,8 @@ const adminPermissionsSchema: z.ZodType<AdminPermissions> = z.object({
     allow_unlimited_expire: z.boolean(),
     allow_next_plan: z.boolean(),
     advanced_actions: z.boolean(),
+    set_flow: z.boolean(),
+    allow_custom_key: z.boolean(),
     max_data_limit_per_user: z.number().nullable(),
   }),
   admin_management: z.object({

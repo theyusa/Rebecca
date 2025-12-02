@@ -1453,33 +1453,14 @@ def get_users(db: Session,
               reset_strategy: Optional[Union[UserDataLimitResetStrategy, list]] = None,
               return_with_count: bool = False) -> Union[List[User], Tuple[List[User], int]]:
     """
-    Retrieves users based on various filters and options.
-    Optimized for performance with efficient eager loading and count queries.
-
-    Args:
-        db (Session): Database session.
-        offset (Optional[int]): Number of records to skip.
-        limit (Optional[int]): Number of records to retrieve.
-        usernames (Optional[List[str]]): List of usernames to filter by.
-        search (Optional[str]): Search term to filter by username or note.
-        status (Optional[Union[UserStatus, list]]): User status or list of statuses to filter by.
-        sort (Optional[List[UsersSortingOptions]]): Sorting options.
-        admin (Optional[Admin]): Admin to filter users by.
-        admins (Optional[List[str]]): List of admin usernames to filter users by.
-        advanced_filters (Optional[List[str]]): Advanced filter keys such as 'online', 'offline', 'finished', 'limit', 'unlimited', 'sub_not_updated', or 'sub_never_updated'.
-        service_id (Optional[int]): Filter users attached to a specific service.
-        reset_strategy (Optional[Union[UserDataLimitResetStrategy, list]]): Data limit reset strategy to filter by.
-        return_with_count (bool): Whether to return the total count of users.
-
-    Returns:
-        Union[List[User], Tuple[List[User], int]]: List of users or tuple of users and total count.
+    Retrieves users with SQL-level filtering/sorting and light eager loading.
+    Designed to run in 1-2 queries (data + optional count) to stay fast on large datasets.
     """
-    query = get_user_queryset(db, eager_load=False)
-    query = _apply_advanced_user_filters(
-        query,
-        advanced_filters,
-        datetime.utcnow(),
-    )
+    now = datetime.utcnow()
+    query = db.query(User)
+
+    # Filters ----------------------------------------------------------------
+    query = _apply_advanced_user_filters(query, advanced_filters, now)
 
     if search:
         like_pattern = f"%{search}%"
@@ -1493,10 +1474,7 @@ def get_users(db: Session,
             search_clauses.append(User.credential_key.in_(key_candidates))
         if uuid_candidates:
             proxy_exists = exists().where(
-                and_(
-                    Proxy.user_id == User.id,
-                    Proxy.settings["id"].as_string().in_(uuid_candidates)
-                )
+                and_(Proxy.user_id == User.id, Proxy.settings["id"].as_string().in_(uuid_candidates))
             )
             search_clauses.append(proxy_exists)
         query = query.filter(or_(*search_clauses))
@@ -1525,31 +1503,34 @@ def get_users(db: Session,
     if admins:
         query = query.filter(User.admin.has(Admin.username.in_(admins)))
 
-    count = None
+    # Count (lightweight) ----------------------------------------------------
+    total = None
     if return_with_count:
-        # Use func.count() directly for better performance
-        count = query.with_entities(func.count(User.id)).scalar() or 0
+        total = query.order_by(None).with_entities(func.count(User.id)).scalar() or 0
 
-    query = query.options(
-        joinedload(User.admin),
-        joinedload(User.service),
-        selectinload(User.proxies),
-    )
-    if _next_plan_table_exists(db):
-        query = query.options(joinedload(User.next_plan))
-
+    # Sorting ----------------------------------------------------------------
     if sort:
         query = query.order_by(*(opt.value for opt in sort))
+    else:
+        query = query.order_by(User.id.desc())
 
+    # Pagination -------------------------------------------------------------
     if offset:
         query = query.offset(offset)
     if limit:
         query = query.limit(limit)
 
+    # Minimal eager loading to avoid N+1 without pulling heavy payloads
+    query = query.options(
+        joinedload(User.admin).load_only(Admin.id, Admin.username),
+        joinedload(User.service).load_only(Service.id, Service.name),
+        selectinload(User.proxies).load_only(Proxy.id, Proxy.type, Proxy.settings),
+    )
+
     users = query.all()
 
     if return_with_count:
-        return users, count
+        return users, total
 
     return users
 
@@ -1865,7 +1846,7 @@ def create_user(
     if resolved_status == UserStatus.active and admin:
         _ensure_active_user_capacity(db, admin, required_slots=1)
 
-    excluded_inbounds_tags = user.excluded_inbounds
+    excluded_inbounds_tags = {} if service is None else user.excluded_inbounds
     if user.credential_key:
         credential_key = normalize_key(user.credential_key)
     else:
@@ -1878,8 +1859,8 @@ def create_user(
     for proxy_key, settings in user.proxies.items():
         proxy_type = ProxyTypes(proxy_key)
         excluded_inbounds = [
-            get_or_create_inbound(db, tag) for tag in excluded_inbounds_tags[proxy_type]
-        ]
+            get_or_create_inbound(db, tag) for tag in excluded_inbounds_tags.get(proxy_type, [])
+        ] if service is not None else []
         serialized = serialize_proxy_settings(settings, proxy_type, credential_key)
         proxies.append(
             Proxy(type=proxy_type.value,
@@ -1891,6 +1872,7 @@ def create_user(
         username=user.username,
         credential_key=credential_key,
         proxies=proxies,
+        flow=user.flow,
         status=resolved_status,
         data_limit=(user.data_limit or None),
         expire=(user.expire or None),
@@ -2043,6 +2025,25 @@ def update_user(
             pass
     added_proxies: Dict[ProxyTypes, Proxy] = {}
 
+    def _prune_exclusions():
+        from app.runtime import xray
+        valid_tags = set(xray.config.inbounds_by_tag.keys())
+        if not valid_tags:
+            return
+        effective_service = service if service_set else dbuser.service
+        for proxy in dbuser.proxies:
+            if effective_service is None:
+                proxy.excluded_inbounds = []
+                continue
+            filtered = [inb for inb in proxy.excluded_inbounds if inb.tag in valid_tags]
+            proxy.excluded_inbounds = filtered
+        # remove association rows for invalid tags
+        db.execute(
+            delete(excluded_inbounds_association).where(
+                excluded_inbounds_association.c.inbound_tag.notin_(valid_tags)
+            )
+        )
+
     if modify.proxies:
         pass
 
@@ -2108,6 +2109,9 @@ def update_user(
     if modify.note is not None:
         dbuser.note = modify.note or None
 
+    if "flow" in modify.model_fields_set:
+        dbuser.flow = modify.flow or None
+
     if modify.data_limit_reset_strategy is not None:
         dbuser.data_limit_reset_strategy = modify.data_limit_reset_strategy.value
 
@@ -2133,12 +2137,25 @@ def update_user(
     if service_set:
         if service is None:
             dbuser.service = None
+            # Clear per-user exclusions when detached from service
+            for proxy in dbuser.proxies:
+                proxy.excluded_inbounds = []
+            db.execute(
+                delete(excluded_inbounds_association).where(
+                    excluded_inbounds_association.c.proxy_id.in_([p.id for p in dbuser.proxies if p.id])
+                )
+            )
         else:
+            # Prevent assigning broken services (no allowed inbounds/hosts)
             allowed = _service_allowed_inbounds(service)
+            if not any(allowed.values()):
+                raise ValueError("Selected service has no hosts and cannot be used")
             dbuser.service = service
             _apply_service_to_user(db, dbuser, service, allowed)
             if admin:
                 _ensure_admin_service_link(db, admin, service)
+    # Prune invalid exclusions (stale inbounds) and ensure service=None has none
+    _prune_exclusions()
 
     current_status_value = _status_to_str(dbuser.status)
     if (
@@ -2262,50 +2279,34 @@ def revoke_user_sub(db: Session, dbuser: User) -> User:
     """
     dbuser.sub_revoked_at = datetime.utcnow()
 
-    # Check if user has UUID/password stored in proxies table (legacy method)
-    has_legacy_credentials = False
-    for proxy in dbuser.proxies:
-        proxy_type = proxy.type
-        if isinstance(proxy_type, str):
-            proxy_type = ProxyTypes(proxy_type)
-        settings = proxy.settings if isinstance(proxy.settings, dict) else {}
-        
-        # Check if UUID or password exists in settings
-        if proxy_type in UUID_PROTOCOLS and settings.get("id"):
-            has_legacy_credentials = True
-            break
-        elif proxy_type in PASSWORD_PROTOCOLS and settings.get("password"):
-            has_legacy_credentials = True
-            break
-
     # Generate new key (either first time or update existing)
     new_key = generate_key()
     dbuser.credential_key = new_key
 
-    if has_legacy_credentials:
-        # User has legacy credentials - remove UUID/password from proxies table
-        # and migrate to key-based method
-        for proxy in dbuser.proxies:
-            proxy_type = proxy.type
-            if isinstance(proxy_type, str):
-                proxy_type = ProxyTypes(proxy_type)
-            settings_obj = ProxySettings.from_dict(proxy_type, proxy.settings)
-            
-            # Remove UUID/password from settings (will be generated from key at runtime)
-            if proxy_type in UUID_PROTOCOLS:
-                settings_obj.id = None
-            if proxy_type in PASSWORD_PROTOCOLS:
-                settings_obj.password = None
-            
-            # Serialize without preserving existing UUID/password
-            proxy.settings = serialize_proxy_settings(settings_obj, proxy_type, new_key, preserve_existing_uuid=False)
-    else:
-        # User already has key or no legacy credentials - just update key
-        _apply_key_to_existing_proxies(dbuser, new_key)
+    # Remove all proxies; credentials will be derived from the new key at runtime
+    db.query(Proxy).filter(Proxy.user_id == dbuser.id).delete(synchronize_session=False)
 
     db.commit()
     db.refresh(dbuser)
     return dbuser
+
+
+def prune_user_inbounds(db: Session, dbuser: User) -> None:
+    """
+    Remove stale inbound exclusions for a user and drop rows that reference
+    inbounds no longer present in the runtime config.
+    """
+    from app.runtime import xray
+
+    valid_tags = set(xray.config.inbounds_by_tag.keys())
+    for proxy in dbuser.proxies:
+        proxy.excluded_inbounds = [inb for inb in proxy.excluded_inbounds if inb.tag in valid_tags]
+    db.execute(
+        delete(excluded_inbounds_association).where(
+            excluded_inbounds_association.c.inbound_tag.notin_(valid_tags)
+        )
+    )
+    db.commit()
 
 
 def update_user_sub(db: Session, dbuser: User, user_agent: str) -> User:

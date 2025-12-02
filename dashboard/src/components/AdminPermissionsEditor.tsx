@@ -52,6 +52,14 @@ const userPermissionKeys: Array<{ key: UserPermissionToggle; label: string }> = 
     key: UserPermissionToggle.AdvancedActions,
     label: "admins.permissions.advancedActions",
   },
+  {
+    key: UserPermissionToggle.SetFlow,
+    label: "admins.permissions.setFlow",
+  },
+  {
+    key: UserPermissionToggle.AllowCustomKey,
+    label: "admins.permissions.customKey",
+  },
 ];
 
 const adminManagementKeys: Array<{ key: AdminManagementPermission; label: string }> = [

@@ -28,7 +28,9 @@ def _add_user_accounts_to_api(dbuser):
                 account_to_add = resolved_proxy_type.account_model(email=email, id=str(existing_id))
             elif user.credential_key and resolved_proxy_type in UUID_PROTOCOLS:
                 try:
-                    proxy_settings = runtime_proxy_settings(settings_model, resolved_proxy_type, user.credential_key)
+                    proxy_settings = runtime_proxy_settings(
+                        settings_model, resolved_proxy_type, user.credential_key, flow=getattr(dbuser, "flow", None)
+                    )
                     proxy_settings.pop('flow', None)
                     account_to_add = resolved_proxy_type.account_model(email=email, **proxy_settings)
                 except Exception:

@@ -70,6 +70,8 @@ class ServiceBase(BaseModel):
     lifetime_used_traffic: int = 0
     host_count: int = 0
     user_count: int = 0
+    has_hosts: bool = True
+    broken: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 

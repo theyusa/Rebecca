@@ -40,7 +40,34 @@ def add_user_with_service(
     """
     Create user. Supports both service-scoped creation (with service_id) and legacy creation without service.
     """
+    # Normalize service_id=0 to None to allow "no service" creation
+    if payload.get("service_id") == 0:
+        payload["service_id"] = None
     admin.ensure_user_permission(UserPermission.create)
+
+    def _ensure_flow_permission(has_flow: bool) -> None:
+        if not has_flow:
+            return
+        if admin.role in (AdminRole.sudo, AdminRole.full_access):
+            return
+        if admin.permissions.users.set_flow:
+            return
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You're not allowed to set user flow.",
+        )
+
+    def _ensure_custom_key_permission(has_key: bool) -> None:
+        if not has_key:
+            return
+        if admin.role in (AdminRole.sudo, AdminRole.full_access):
+            return
+        if admin.permissions.users.allow_custom_key:
+            return
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You're not allowed to set a custom credential key.",
+        )
 
     if payload.get("service_id") is not None:
         # Service-scoped creation (existing behavior)
@@ -48,6 +75,9 @@ def add_user_with_service(
             service_payload = UserServiceCreate.model_validate(payload)
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+        _ensure_flow_permission(bool(service_payload.flow))
+        _ensure_custom_key_permission(bool(service_payload.credential_key))
 
         service = crud.get_service(db, service_payload.service_id)
         if not service:
@@ -81,6 +111,7 @@ def add_user_with_service(
                 expire=user_data.expire,
                 next_plan=user_data.next_plan.model_dump() if user_data.next_plan else None,
             )
+            _ensure_custom_key_permission(bool(user_data.credential_key))
             ensure_user_credential_key(user_data)
             dbuser = crud.create_user(
                 db,
@@ -113,6 +144,8 @@ def add_user_with_service(
             expire=user_data.expire,
             next_plan=user_data.next_plan.model_dump() if user_data.next_plan else None,
         )
+        _ensure_flow_permission(bool(user_data.flow))
+        _ensure_custom_key_permission(bool(user_data.credential_key))
         for proxy_type in user_data.proxies:
             if not xray.config.inbounds_by_protocol.get(proxy_type):
                 raise HTTPException(
@@ -150,6 +183,11 @@ def modify_user_with_service(
     dbuser: UsersResponse = Depends(get_validated_user),
     admin: Admin = Depends(Admin.require_active),
 ):
+    # Clean stale inbound references before applying updates
+    try:
+        crud.prune_user_inbounds(db, dbuser)
+    except Exception:
+        pass
     for proxy_type in modified_user.proxies:
         if not xray.config.inbounds_by_protocol.get(proxy_type):
             raise HTTPException(
@@ -174,6 +212,12 @@ def modify_user_with_service(
             if not service:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
             _ensure_service_visibility(service, admin)
+            allowed_inbounds = crud.get_service_allowed_inbounds(service)
+            if not any(allowed_inbounds.values()):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Selected service has no hosts and cannot be used. Please reconfigure the service.",
+                )
             db_admin = crud.get_admin(db, admin.username)
             if not db_admin:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin not found")
@@ -185,6 +229,21 @@ def modify_user_with_service(
         expire=modified_user.expire,
         next_plan=modified_user.next_plan.model_dump() if modified_user.next_plan else None,
     )
+    if "flow" in modified_user.model_fields_set:
+        has_flow_value = bool(modified_user.flow)
+        if admin.role not in (AdminRole.sudo, AdminRole.full_access):
+            if not admin.permissions.users.set_flow:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You're not allowed to set user flow.",
+                )
+    if "credential_key" in modified_user.model_fields_set and modified_user.credential_key:
+        if admin.role not in (AdminRole.sudo, AdminRole.full_access):
+            if not admin.permissions.users.allow_custom_key:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You're not allowed to set a custom credential key.",
+                )
 
     try:
         dbuser_obj = crud.update_user(
@@ -196,6 +255,9 @@ def modify_user_with_service(
             admin=db_admin,
         )
     except UsersLimitReachedError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

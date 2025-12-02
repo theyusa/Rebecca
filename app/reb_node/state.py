@@ -76,6 +76,8 @@ def _host_to_dict(host: "ProxyHost", service_ids: Optional[Sequence[int]] = None
         "sort": host.sort if host.sort is not None else 0,
         "id": host.id,
         "service_ids": list(service_ids) if service_ids else [],
+        "is_disabled": host.is_disabled,
+        "inbound_tag": host.inbound_tag,
     }
 
 
@@ -89,6 +91,7 @@ def rebuild_service_hosts_cache() -> None:
         cache: Dict[Optional[int], Dict[str, list]] = {None: {k: [] for k in base_map}}
 
         inbound_tags = set(config.inbounds_by_tag.keys())
+        host_dicts = []
         with GetDB() as db:
             hosts = (
                 db.query(db_models.ProxyHost)
@@ -100,26 +103,44 @@ def rebuild_service_hosts_cache() -> None:
                 .filter(db_models.ProxyHost.inbound_tag.in_(inbound_tags))
                 .all()
             )
-
-        for host in hosts:
-            if host.is_disabled:
-                continue
-            if host.inbound_tag not in inbound_tags:
-                continue
-
-            service_ids = [
-                link.service_id
-                for link in getattr(host, "service_links", [])
-                if link.service_id is not None
-            ]
-            host_dict = _host_to_dict(host, service_ids)
-            target_service_ids = service_ids or [None]
-
-            for service_id in target_service_ids:
-                host_map = cache.setdefault(
-                    service_id, {k: [] for k in base_map}
+            valid_host_ids = {h.id for h in hosts if h.id is not None}
+            # Remove service links pointing to invalid hosts
+            if valid_host_ids:
+                db.query(db_models.ServiceHostLink).filter(
+                    ~db_models.ServiceHostLink.host_id.in_(valid_host_ids)
+                ).delete(synchronize_session=False)
+            else:
+                db.query(db_models.ServiceHostLink).delete(synchronize_session=False)
+            # Remove exclude_inbounds_association entries for deleted inbounds
+            db.execute(
+                db_models.excluded_inbounds_association.delete().where(
+                    db_models.excluded_inbounds_association.c.inbound_tag.notin_(inbound_tags)
                 )
-                host_map.setdefault(host.inbound_tag, []).append(host_dict)
+            )
+
+            for host in hosts:
+                if host.is_disabled:
+                    continue
+                if host.inbound_tag not in inbound_tags:
+                    continue
+
+                service_ids = [
+                    link.service_id
+                    for link in getattr(host, "service_links", [])
+                    if link.service_id is not None
+                ]
+                host_dict = _host_to_dict(host, service_ids)
+                host_dicts.append(host_dict)
+                # Always include global (None) plus any linked services so "No service"
+                # users still see all active hosts.
+                target_service_ids = (service_ids or []) + [None]
+
+                for service_id in target_service_ids:
+                    host_map = cache.setdefault(
+                        service_id, {k: [] for k in base_map}
+                    )
+                    host_map.setdefault(host.inbound_tag, []).append(host_dict)
+            db.commit()
 
         for host_map in cache.values():
             for tag in config.inbounds_by_tag.keys():
@@ -176,4 +197,5 @@ def hosts(storage: dict):
     storage.clear()
     rebuild_service_hosts_cache()
     host_map = service_hosts_cache.get(None, _empty_host_map())
-    storage.update(host_map)
+    # DictStorage.update() triggers the refresh hook with no args; use dict.update to populate.
+    dict.update(storage, host_map)

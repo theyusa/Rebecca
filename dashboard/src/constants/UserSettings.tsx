@@ -92,4 +92,9 @@ export const statusColors: {
     bandWidthColor: "red",
     icon: LimitedStatusIcon,
   },
+  deleted: {
+    statusColor: "gray",
+    bandWidthColor: "gray",
+    icon: DisabledStatusIcon,
+  },
 };

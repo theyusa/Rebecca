@@ -21,6 +21,8 @@ const USER_ONLY_TEMPLATE: PermissionTemplate = {
     [UserPermissionToggle.AllowUnlimitedExpire]: true,
     [UserPermissionToggle.AllowNextPlan]: true,
     [UserPermissionToggle.AdvancedActions]: true,
+    [UserPermissionToggle.SetFlow]: false,
+    [UserPermissionToggle.AllowCustomKey]: false,
     max_data_limit_per_user: null,
   },
   admin_management: {
@@ -55,6 +57,8 @@ const SUDO_TEMPLATE: PermissionTemplate = {
     [UserPermissionToggle.AllowUnlimitedExpire]: true,
     [UserPermissionToggle.AllowNextPlan]: true,
     [UserPermissionToggle.AdvancedActions]: true,
+    [UserPermissionToggle.SetFlow]: true,
+    [UserPermissionToggle.AllowCustomKey]: true,
     max_data_limit_per_user: null,
   },
   admin_management: {
@@ -89,6 +93,8 @@ const FULL_ACCESS_TEMPLATE: PermissionTemplate = {
     [UserPermissionToggle.AllowUnlimitedExpire]: true,
     [UserPermissionToggle.AllowNextPlan]: true,
     [UserPermissionToggle.AdvancedActions]: true,
+    [UserPermissionToggle.SetFlow]: true,
+    [UserPermissionToggle.AllowCustomKey]: true,
     max_data_limit_per_user: null,
   },
   admin_management: {

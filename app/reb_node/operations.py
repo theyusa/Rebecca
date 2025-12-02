@@ -86,7 +86,15 @@ def _build_runtime_accounts(
     email = f"{dbuser.id}.{dbuser.username}"
     accounts: List[Account] = []
     try:
-        proxy_settings = runtime_proxy_settings(settings_model, proxy_type, user.credential_key)
+        user_flow = getattr(dbuser, "flow", None)
+        if user_flow:
+            proxy_settings = runtime_proxy_settings(
+                settings_model, proxy_type, user.credential_key, flow=user_flow
+            )
+        else:
+            proxy_settings = runtime_proxy_settings(
+                settings_model, proxy_type, user.credential_key
+            )
     except Exception as exc:
         logger.warning(
             "Failed to build runtime credentials for user %s (%s) and proxy %s: %s",

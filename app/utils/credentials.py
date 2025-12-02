@@ -102,6 +102,8 @@ def serialize_proxy_settings(
         Serialized proxy settings dictionary
     """
     data = settings.dict(no_obj=True)
+    # flow should live on the user, not per-proxy
+    data.pop("flow", None)
 
     if credential_key:
         if proxy_type in UUID_PROTOCOLS:
@@ -145,6 +147,7 @@ def runtime_proxy_settings(
     settings: ProxySettings,
     proxy_type: ProxyTypes,
     credential_key: Optional[str],
+    flow: Optional[str] = None,
 ) -> dict:
     def _sanitize_uuid(value: Any) -> Optional[str]:
         if value is None:
@@ -173,6 +176,9 @@ def runtime_proxy_settings(
             data = dict(settings)
     else:
         data = {}
+
+    # Remove persisted flow; flow is now user-scoped
+    data.pop("flow", None)
 
     current_id = data.get("id")
     sanitized_id = _sanitize_uuid(current_id)
@@ -208,6 +214,9 @@ def runtime_proxy_settings(
         else:
             data.setdefault("password", random_password())
         data.setdefault("method", ShadowsocksMethods.CHACHA20_POLY1305.value)
+
+    if flow:
+        data["flow"] = flow
 
     return data
 

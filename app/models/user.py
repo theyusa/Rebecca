@@ -34,6 +34,13 @@ USERNAME_REGEXP = re.compile(r"^(?=\w{3,32}\b)[a-zA-Z0-9-_@.]+(?:_[a-zA-Z0-9-_@.
 
 _skip_expensive_computations: ContextVar[bool] = ContextVar('skip_expensive_computations', default=False)
 
+ALLOWED_FLOW_VALUES = {
+    None,
+    "",
+    "xtls-rprx-vision",
+    "xtls-rprx-vision-udp443",
+}
+
 
 def _normalize_ip_limit(value) -> int:
     if value is None:
@@ -167,6 +174,7 @@ class User(BaseModel):
     credential_key: Optional[str] = None
     key_subscription_url: Optional[str] = None
     proxies: Dict[ProxyTypes, ProxySettings] = {}
+    flow: Optional[str] = None
     expire: Optional[int] = Field(None, nullable=True)
     data_limit: Optional[int] = Field(
         ge=0, default=None, description="data_limit can be 0 or greater"
@@ -198,6 +206,16 @@ class User(BaseModel):
         first = next(iter(self.proxies))
         return first if isinstance(first, ProxyTypes) else ProxyTypes(first)
 
+    @field_validator("flow", mode="before")
+    def validate_flow(cls, value):
+        if value in (None, ""):
+            return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            if normalized in ALLOWED_FLOW_VALUES:
+                return normalized
+        raise ValueError("Unsupported flow value")
+
     def _account_email(self) -> str:
         identifier = getattr(self, "id", None)
         if identifier:
@@ -225,11 +243,17 @@ class User(BaseModel):
 
         account_data = {"email": self._account_email()}
         runtime_key = credential_key or self.credential_key
-        if runtime_key:
+        if runtime_key and self.flow:
+            proxy_data = runtime_proxy_settings(
+                settings, resolved_type, runtime_key, flow=self.flow
+            )
+        elif runtime_key:
             proxy_data = runtime_proxy_settings(settings, resolved_type, runtime_key)
+            proxy_data.pop("flow", None)
         else:
             proxy_data = settings.dict(no_obj=True)
-        proxy_data.pop("flow", None)
+            if not self.flow:
+                proxy_data.pop("flow", None)
 
         if resolved_type in UUID_PROTOCOLS and "id" not in proxy_data:
             raise ValueError("UUID is required for proxy type %s" % resolved_type.value)
@@ -467,6 +491,8 @@ class UserServiceCreate(BaseModel):
     auto_delete_in_days: Optional[int] = Field(None, nullable=True)
     next_plan: Optional[NextPlanModel] = Field(None, nullable=True)
     ip_limit: int = 0
+    flow: Optional[str] = None
+    credential_key: Optional[str] = None
 
     @field_validator("username")
     @classmethod
@@ -481,6 +507,16 @@ class UserServiceCreate(BaseModel):
     @field_validator("ip_limit", mode="before")
     def normalize_ip_limit(cls, value):
         return _normalize_ip_limit(value)
+
+    @field_validator("flow", mode="before")
+    def validate_flow(cls, value):
+        if value in (None, ""):
+            return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            if normalized in ALLOWED_FLOW_VALUES:
+                return normalized
+        raise ValueError("Unsupported flow value")
 
 
 class UserResponse(User):

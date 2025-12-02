@@ -39,6 +39,8 @@ class UserPermission(str, Enum):
     allow_unlimited_expire = "allow_unlimited_expire"
     allow_next_plan = "allow_next_plan"
     advanced_actions = "advanced_actions"
+    set_flow = "set_flow"
+    allow_custom_key = "allow_custom_key"
 
 
 class AdminManagementPermission(str, Enum):
@@ -67,6 +69,8 @@ class UserPermissionSettings(BaseModel):
     allow_unlimited_expire: bool = False
     allow_next_plan: bool = False
     advanced_actions: bool = True
+    set_flow: bool = False
+    allow_custom_key: bool = False
     max_data_limit_per_user: Optional[int] = None
     model_config = ConfigDict(from_attributes=True)
 
@@ -138,6 +142,8 @@ ROLE_DEFAULT_PERMISSIONS: Dict[AdminRole, AdminPermissions] = {
             allow_unlimited_expire=True,
             allow_next_plan=True,
             advanced_actions=True,
+            set_flow=False,
+            allow_custom_key=False,
             max_data_limit_per_user=None,
         ),
         admin_management=AdminManagementPermissions(
@@ -170,6 +176,8 @@ ROLE_DEFAULT_PERMISSIONS: Dict[AdminRole, AdminPermissions] = {
             allow_unlimited_data=True,
             allow_unlimited_expire=True,
             allow_next_plan=True,
+            set_flow=False,
+            allow_custom_key=False,
             max_data_limit_per_user=None,
         ),
         admin_management=AdminManagementPermissions(
@@ -202,6 +210,8 @@ ROLE_DEFAULT_PERMISSIONS: Dict[AdminRole, AdminPermissions] = {
             allow_unlimited_data=True,
             allow_unlimited_expire=True,
             allow_next_plan=True,
+            set_flow=True,
+            allow_custom_key=True,
             max_data_limit_per_user=None,
         ),
         admin_management=AdminManagementPermissions(
@@ -234,6 +244,8 @@ ROLE_DEFAULT_PERMISSIONS: Dict[AdminRole, AdminPermissions] = {
             allow_unlimited_data=True,
             allow_unlimited_expire=True,
             allow_next_plan=True,
+            set_flow=True,
+            allow_custom_key=True,
             max_data_limit_per_user=None,
         ),
         admin_management=AdminManagementPermissions(
@@ -267,6 +279,8 @@ USER_PERMISSION_MESSAGES: Dict[UserPermission, str] = {
     UserPermission.allow_unlimited_data: "create unlimited data users",
     UserPermission.allow_unlimited_expire: "create unlimited duration users",
     UserPermission.allow_next_plan: "use next plan features",
+    UserPermission.set_flow: "set user flow",
+    UserPermission.allow_custom_key: "set custom credential key",
 }
 
 def _resolve_role(value: Optional[AdminRole]) -> AdminRole:

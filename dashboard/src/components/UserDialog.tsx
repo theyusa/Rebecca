@@ -9,6 +9,7 @@ import {
   Box,
 
   Button,
+  Badge,
 
   Collapse,
 
@@ -240,6 +241,8 @@ type BaseFormFields = Pick<
 
   | "note"
 
+  | "flow"
+
   | "credential_key"
 
   | "proxies"
@@ -279,6 +282,7 @@ const formatUser = (user: User): FormType => {
   return {
 
     ...user,
+    flow: user.flow ?? "",
 
     data_limit: user.data_limit
 
@@ -334,6 +338,8 @@ const getDefaultValues = (): FormType => {
 
     manual_key_entry: false,
 
+    flow: "",
+
     username: "",
 
     data_limit_reset_strategy: "no_reset",
@@ -348,7 +354,7 @@ const getDefaultValues = (): FormType => {
 
     proxies: {
 
-      vless: { id: "", flow: "" },
+      vless: { id: "" },
 
       vmess: { id: "" },
 
@@ -378,11 +384,22 @@ const getDefaultValues = (): FormType => {
 
 const CREDENTIAL_KEY_REGEX = /^[0-9a-fA-F]{32}$/;
 
+const allowedFlows = ["", "xtls-rprx-vision", "xtls-rprx-vision-udp443"];
+
 const baseSchema = {
 
   username: z.string().min(1, { message: "Required" }),
 
   note: z.string().nullable(),
+
+  flow: z
+    .string()
+    .optional()
+    .transform((val) => (val === "" || typeof val === "undefined" ? null : val))
+    .refine(
+      (val) => val === null || allowedFlows.includes(val),
+      "Unsupported flow"
+    ),
 
   service_id: z
 
@@ -732,6 +749,11 @@ export const UserDialog: FC<UserDialogProps> = () => {
     getUserIsSuccess &&
     (userData.role === AdminRole.Sudo || userData.role === AdminRole.FullAccess)
   );
+  const canSetFlow =
+    hasElevatedRole || Boolean(userData.permissions?.users?.[UserPermissionToggle.SetFlow]);
+  const canSetCustomKey =
+    hasElevatedRole ||
+    Boolean(userData.permissions?.users?.[UserPermissionToggle.AllowCustomKey]);
   const canCreateUsers =
     hasElevatedRole ||
     Boolean(userData.permissions?.users?.[UserPermissionToggle.Create]);
@@ -978,6 +1000,16 @@ export const UserDialog: FC<UserDialogProps> = () => {
     }
   }, [editingUser, isEditing, isOpen]);
 
+  useEffect(() => {
+    if (!canSetCustomKey) {
+      form.setValue("manual_key_entry", false, { shouldDirty: true });
+      form.setValue("credential_key", null, { shouldDirty: true });
+    }
+    if (!canSetFlow) {
+      form.setValue("flow", "", { shouldDirty: false });
+    }
+  }, [canSetCustomKey, canSetFlow, form]);
+
 
 
   const submit = (values: FormType) => {
@@ -1007,6 +1039,8 @@ export const UserDialog: FC<UserDialogProps> = () => {
       next_plan_add_remaining_traffic,
 
       next_plan_fire_on_either,
+
+      flow,
 
       proxies,
 
@@ -1114,9 +1148,11 @@ export const UserDialog: FC<UserDialogProps> = () => {
 
           status === "on_hold" ? on_hold_expire_duration : null,
 
+        flow: canSetFlow ? flow || null : null,
+
       };
 
-      if (manual_key_entry && credential_key) {
+      if (canSetCustomKey && manual_key_entry && credential_key) {
         serviceBody.credential_key = credential_key;
       }
 
@@ -1222,9 +1258,11 @@ export const UserDialog: FC<UserDialogProps> = () => {
 
         status === "on_hold" ? on_hold_expire_duration : null,
 
+      flow: canSetFlow ? flow || null : null,
+
     };
 
-    if (manual_key_entry && credential_key) {
+    if (canSetCustomKey && manual_key_entry && credential_key) {
       body.credential_key = credential_key;
     }
 
@@ -2299,8 +2337,8 @@ export const UserDialog: FC<UserDialogProps> = () => {
                         )}
 
                         {services.map((service) => {
-
                           const isSelected = selectedServiceId === service.id;
+                          const isBroken = service.broken === true || service.has_hosts === false;
 
                           return (
 
@@ -2310,13 +2348,13 @@ export const UserDialog: FC<UserDialogProps> = () => {
 
                               role="button"
 
-                              tabIndex={disabled ? -1 : 0}
+                              tabIndex={disabled || isBroken ? -1 : 0}
 
                               aria-pressed={isSelected}
 
                               onKeyDown={(event) => {
 
-                                if (disabled) return;
+                                if (disabled || isBroken) return;
 
                                 if (event.key === "Enter" || event.key === " ") {
 
@@ -2330,7 +2368,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 
                               onClick={() => {
 
-                                if (disabled) return;
+                                if (disabled || isBroken) return;
 
                                 setSelectedServiceId(service.id);
 
@@ -2346,9 +2384,9 @@ export const UserDialog: FC<UserDialogProps> = () => {
 
                             bg={isSelected ? "primary.50" : "transparent"}
 
-                            cursor={disabled ? "not-allowed" : "pointer"}
+                            cursor={disabled || isBroken ? "not-allowed" : "pointer"}
 
-                            pointerEvents={disabled ? "none" : "auto"}
+                            pointerEvents={disabled || isBroken ? "none" : "auto"}
 
                             transition="border-color 0.2s ease, background-color 0.2s ease"
 
@@ -2413,6 +2451,11 @@ export const UserDialog: FC<UserDialogProps> = () => {
                                   })}
 
                                 </Text>
+                                {isBroken && (
+                                  <Badge colorScheme="red" mt={1}>
+                                    {t("userDialog.brokenService", "No hosts")}
+                                  </Badge>
+                                )}
 
                               </HStack>
 
@@ -2447,6 +2490,12 @@ export const UserDialog: FC<UserDialogProps> = () => {
 
                         )}
 
+                        {selectedService && (selectedService.broken || selectedService.has_hosts === false) && (
+                          <Text color="red.500" fontSize="sm" mt={1}>
+                            {t("userDialog.brokenServiceWarning", "Selected service has no hosts. Please pick another service.")}
+                          </Text>
+                        )}
+
                       </FormHelperText>
 
                     )}
@@ -2456,14 +2505,45 @@ export const UserDialog: FC<UserDialogProps> = () => {
                 </GridItem>
                 )}
 
+                {canSetFlow && (
+                  <GridItem colSpan={{ base: 1, md: showServiceSelector ? 2 : 1 }}>
+                    <FormControl>
+                      <FormLabel>{t("userDialog.flow.label", "Flow")}</FormLabel>
+                      <Controller
+                        name="flow"
+                        control={form.control}
+                        render={({ field }) => (
+                          <Select
+                            size="sm"
+                            value={field.value ?? ""}
+                            onChange={(event) => field.onChange(event.target.value)}
+                            isDisabled={disabled}
+                          >
+                            <option value="">{t("userDialog.flow.none", "None")}</option>
+                            <option value="xtls-rprx-vision">
+                              {t("userDialog.flow.xtls_rprx_vision", "xtls-rprx-vision")}
+                            </option>
+                            <option value="xtls-rprx-vision-udp443">
+                              {t(
+                                "userDialog.flow.xtls_rprx_vision_udp443",
+                                "xtls-rprx-vision-udp443"
+                              )}
+                            </option>
+                          </Select>
+                        )}
+                      />
+                    </FormControl>
+                  </GridItem>
+                )}
+
                 <GridItem colSpan={{ base: 1, md: showServiceSelector ? 2 : 1 }}>
-                  {hasExistingKey && (
+                  {hasExistingKey && canSetCustomKey && (
                     <>
                       <FormControl display="flex" alignItems="center" justifyContent="space-between">
                         <FormLabel mb={0}>
                           {t(
                             "userDialog.allowManualKeyEntry",
-                            "Allow custom credential key entry"
+                            "Custom key"
                           )}
                         </FormLabel>
                         <Controller

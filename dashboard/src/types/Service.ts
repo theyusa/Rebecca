@@ -24,6 +24,8 @@ export type ServiceSummary = {
   lifetime_used_traffic: number;
   host_count: number;
   user_count: number;
+  has_hosts: boolean;
+  broken: boolean;
 };
 
 export type ServiceDetail = ServiceSummary & {
