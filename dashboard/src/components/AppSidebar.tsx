@@ -9,6 +9,7 @@ import {
   ChevronDownIcon,
   Squares2X2Icon,
   ChartPieIcon,
+  UserCircleIcon,
 } from "@heroicons/react/24/outline";
 import { NavLink, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -36,6 +37,7 @@ const AdminIconStyled = chakra(ShieldCheckIcon, iconProps);
 const ChevronDownIconStyled = chakra(ChevronDownIcon, iconProps);
 const ServicesIconStyled = chakra(Squares2X2Icon, iconProps);
 const UsageIconStyled = chakra(ChartPieIcon, iconProps);
+const MyAccountIconStyled = chakra(UserCircleIcon, iconProps);
 interface AppSidebarProps {
   collapsed: boolean;
   /** when rendered inside a Drawer on mobile */
@@ -82,6 +84,18 @@ export const AppSidebar: FC<AppSidebarProps> = ({ collapsed, inDrawer = false, o
     }
   }, [t, userData.role]);
   const sectionAccess = userData.permissions?.sections;
+  const privilegedSelf =
+    userData.role === AdminRole.FullAccess ||
+    userData.role === AdminRole.Sudo ||
+    userData.role === AdminRole.Standard;
+  const baseSelf = userData.permissions?.self_permissions || {
+    self_myaccount: true,
+    self_change_password: true,
+    self_api_keys: true,
+  };
+  const selfAccess = privilegedSelf
+    ? { self_myaccount: true, self_change_password: true, self_api_keys: true }
+    : baseSelf;
   const canViewUsage = Boolean(sectionAccess?.[AdminSection.Usage]);
   const canViewAdmins = Boolean(sectionAccess?.[AdminSection.Admins]);
   const canViewServicesSection = Boolean(sectionAccess?.[AdminSection.Services]);
@@ -133,6 +147,10 @@ export const AppSidebar: FC<AppSidebarProps> = ({ collapsed, inDrawer = false, o
   { title: t("dashboard"), url: "/", icon: HomeIconStyled },
   { title: t("users"), url: "/users", icon: UsersIconStyled },
   ];
+
+  if (selfAccess.self_myaccount) {
+    items.splice(1, 0, { title: t("myaccount.menu"), url: "/myaccount", icon: MyAccountIconStyled });
+  }
 
   if (canViewUsage) {
     items.push({ title: t("usage.menu", "Usage"), url: "/usage", icon: UsageIconStyled });

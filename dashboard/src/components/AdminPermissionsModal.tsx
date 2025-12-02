@@ -7,6 +7,7 @@ import {
   ModalFooter,
   ModalHeader,
   ModalOverlay,
+  Text,
   useToast,
 } from "@chakra-ui/react";
 import { useAdminsStore } from "contexts/AdminsContext";
@@ -33,6 +34,7 @@ export const AdminPermissionsModal = ({ isOpen, onClose, admin }: AdminPermissio
   );
   const [maxDataLimitValue, setMaxDataLimitValue] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const isFullAccess = admin?.role === AdminRole.FullAccess;
 
   useEffect(() => {
     if (admin) {
@@ -50,6 +52,7 @@ export const AdminPermissionsModal = ({ isOpen, onClose, admin }: AdminPermissio
 
   const handleSave = async () => {
     if (!admin) return;
+    if (isFullAccess) return;
     setSaving(true);
     try {
       await updateAdmin(admin.username, {
@@ -75,10 +78,15 @@ export const AdminPermissionsModal = ({ isOpen, onClose, admin }: AdminPermissio
         </ModalHeader>
         <ModalCloseButton />
         <ModalBody>
+          {isFullAccess && (
+            <Text color="gray.500" mb={3}>
+              {t("admins.permissions.fullAccessLocked")}
+            </Text>
+          )}
           <AdminPermissionsEditor
             value={permissionsDraft}
             onChange={setPermissionsDraft}
-            showReset
+            showReset={!isFullAccess}
             onReset={() => setPermissionsDraft(DEFAULT_ADMIN_PERMISSIONS)}
             maxDataLimitValue={maxDataLimitValue}
             onMaxDataLimitChange={(value) => {
@@ -94,14 +102,20 @@ export const AdminPermissionsModal = ({ isOpen, onClose, admin }: AdminPermissio
               }));
             }}
             hideExtendedSections={admin?.role === AdminRole.Standard}
+            isReadOnly={isFullAccess}
           />
         </ModalBody>
         <ModalFooter>
           <Button variant="ghost" mr={3} onClick={onClose}>
             {t("cancel")}
           </Button>
-          <Button colorScheme="primary" onClick={handleSave} isLoading={saving} isDisabled={!admin}>
-            {t("save", "Save")}
+          <Button
+            colorScheme="primary"
+            onClick={handleSave}
+            isLoading={saving}
+            isDisabled={!admin || isFullAccess}
+          >
+            {t("save")}
           </Button>
         </ModalFooter>
       </ModalContent>

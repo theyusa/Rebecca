@@ -63,6 +63,11 @@ const ROLE_PERMISSION_PRESETS: Record<AdminRole, AdminPermissions> = {
       can_edit: false,
       can_manage_sudo: false,
     },
+    self_permissions: {
+      self_myaccount: true,
+      self_change_password: true,
+      self_api_keys: true,
+    },
     sections: {
       usage: false,
       admins: false,
@@ -90,6 +95,11 @@ const ROLE_PERMISSION_PRESETS: Record<AdminRole, AdminPermissions> = {
       can_view: false,
       can_edit: false,
       can_manage_sudo: false,
+    },
+    self_permissions: {
+      self_myaccount: true,
+      self_change_password: true,
+      self_api_keys: true,
     },
     sections: {
       usage: false,
@@ -119,6 +129,11 @@ const ROLE_PERMISSION_PRESETS: Record<AdminRole, AdminPermissions> = {
       can_edit: true,
       can_manage_sudo: false,
     },
+    self_permissions: {
+      self_myaccount: true,
+      self_change_password: true,
+      self_api_keys: true,
+    },
     sections: {
       usage: true,
       admins: true,
@@ -146,6 +161,11 @@ const ROLE_PERMISSION_PRESETS: Record<AdminRole, AdminPermissions> = {
       can_view: true,
       can_edit: true,
       can_manage_sudo: true,
+    },
+    self_permissions: {
+      self_myaccount: true,
+      self_change_password: true,
+      self_api_keys: true,
     },
     sections: {
       usage: true,
@@ -182,6 +202,11 @@ const adminPermissionsSchema: z.ZodType<AdminPermissions> = z.object({
     can_view: z.boolean(),
     can_edit: z.boolean(),
     can_manage_sudo: z.boolean(),
+  }),
+  self_permissions: z.object({
+    self_myaccount: z.boolean(),
+    self_change_password: z.boolean(),
+    self_api_keys: z.boolean(),
   }),
   sections: z.object({
     usage: z.boolean(),
@@ -637,15 +662,20 @@ export const AdminDialog: FC = () => {
           </VStack>
         </RadioGroup>
       </FormControl>
-      {mode === "edit" && (
-        <Button
-          alignSelf="flex-start"
-          onClick={() => setPermissionsModalOpen(true)}
-          variant="outline"
-        >
-          {t("admins.editPermissionsButton", "Edit permissions")}
-        </Button>
-      )}
+      {mode === "edit" &&
+        (admin?.role === AdminRole.FullAccess ? (
+          <Text fontSize="sm" color="gray.500">
+            {t("admins.permissions.fullAccessLocked")}
+          </Text>
+        ) : (
+          <Button
+            alignSelf="flex-start"
+            onClick={() => setPermissionsModalOpen(true)}
+            variant="outline"
+          >
+            {t("admins.editPermissionsButton", "Edit permissions")}
+          </Button>
+        ))}
       <FormControl isInvalid={!!errors.telegram_id}>
         <FormLabel>{t("admins.telegramId", "Telegram ID")}</FormLabel>
         <Input
@@ -714,6 +744,7 @@ export const AdminDialog: FC = () => {
                       onMaxDataLimitChange={handleMaxDataLimitChange}
                       maxDataLimitError={errors.maxDataLimitPerUserGb?.message as string | undefined}
                       hideExtendedSections={watchRole === AdminRole.Standard}
+                      isReadOnly={watchRole === AdminRole.FullAccess}
                     />
                   </TabPanel>
                 </TabPanels>

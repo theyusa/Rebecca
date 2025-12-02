@@ -39,6 +39,12 @@ export enum AdminSection {
   Xray = "xray",
 }
 
+export enum SelfPermissionToggle {
+  SelfMyAccount = "self_myaccount",
+  SelfChangePassword = "self_change_password",
+  SelfApiKeys = "self_api_keys",
+}
+
 export type UserPermissionSettings = Record<UserPermissionToggle, boolean> & {
   max_data_limit_per_user: number | null;
 };
@@ -51,6 +57,11 @@ export type AdminPermissions = {
   users: UserPermissionSettings;
   admin_management: AdminManagementPermissions;
   sections: SectionPermissionSettings;
+  self_permissions: {
+    self_myaccount: boolean;
+    self_change_password: boolean;
+    self_api_keys: boolean;
+  };
 };
 
 export type Admin = {

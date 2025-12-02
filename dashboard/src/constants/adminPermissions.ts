@@ -37,6 +37,11 @@ const USER_ONLY_TEMPLATE: PermissionTemplate = {
     [AdminSection.Integrations]: false,
     [AdminSection.Xray]: false,
   },
+  self_permissions: {
+    self_myaccount: true,
+    self_change_password: true,
+    self_api_keys: true,
+  },
 };
 
 const SUDO_TEMPLATE: PermissionTemplate = {
@@ -66,6 +71,11 @@ const SUDO_TEMPLATE: PermissionTemplate = {
     [AdminSection.Integrations]: true,
     [AdminSection.Xray]: true,
   },
+  self_permissions: {
+    self_myaccount: true,
+    self_change_password: true,
+    self_api_keys: true,
+  },
 };
 
 const FULL_ACCESS_TEMPLATE: PermissionTemplate = {
@@ -94,6 +104,11 @@ const FULL_ACCESS_TEMPLATE: PermissionTemplate = {
     [AdminSection.Nodes]: true,
     [AdminSection.Integrations]: true,
     [AdminSection.Xray]: true,
+  },
+  self_permissions: {
+    self_myaccount: true,
+    self_change_password: true,
+    self_api_keys: true,
   },
 };
 

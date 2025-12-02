@@ -8,6 +8,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 import uuid
+import secrets
+from hashlib import sha256
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union, Literal
 from types import SimpleNamespace
 
@@ -22,6 +24,7 @@ from app.db.models import (
     Admin,
     AdminServiceLink,
     AdminUsageLogs,
+    AdminApiKey,
     NextPlan,
     MasterNodeState,
     Node,
@@ -3214,9 +3217,10 @@ def update_admin(db: Session, dbadmin: Admin, modified_admin: AdminModify) -> Ad
     target_role = modified_admin.role or dbadmin.role
     if modified_admin.role is not None:
         dbadmin.role = modified_admin.role
+    ignore_permission_changes = dbadmin.role == AdminRole.full_access
     if target_role == AdminRole.full_access:
         dbadmin.permissions = ROLE_DEFAULT_PERMISSIONS[AdminRole.full_access].model_dump()
-    elif modified_admin.permissions is not None:
+    elif modified_admin.permissions is not None and not ignore_permission_changes:
         dbadmin.permissions = modified_admin.permissions.model_dump()
     if modified_admin.password is not None and dbadmin.hashed_password != modified_admin.hashed_password:
         dbadmin.hashed_password = modified_admin.hashed_password
@@ -3262,9 +3266,10 @@ def partial_update_admin(db: Session, dbadmin: Admin, modified_admin: AdminParti
     target_role = modified_admin.role or dbadmin.role
     if modified_admin.role is not None:
         dbadmin.role = modified_admin.role
+    ignore_permission_changes = dbadmin.role == AdminRole.full_access
     if target_role == AdminRole.full_access:
         dbadmin.permissions = ROLE_DEFAULT_PERMISSIONS[AdminRole.full_access].model_dump()
-    elif modified_admin.permissions is not None:
+    elif modified_admin.permissions is not None and not ignore_permission_changes:
         dbadmin.permissions = modified_admin.permissions.model_dump()
     if modified_admin.password is not None and dbadmin.hashed_password != modified_admin.hashed_password:
         dbadmin.hashed_password = modified_admin.hashed_password
@@ -3387,6 +3392,48 @@ def get_admin_by_telegram_id(db: Session, telegram_id: int) -> Admin:
         .filter(Admin.status != AdminStatus.deleted)
         .first()
     )
+
+
+# Admin API keys
+def list_admin_api_keys(db: Session, admin: Admin) -> List[AdminApiKey]:
+    """Return API keys owned by the given admin."""
+    return (
+        db.query(AdminApiKey)
+        .filter(AdminApiKey.admin_id == admin.id)
+        .order_by(AdminApiKey.created_at.desc())
+        .all()
+    )
+
+
+def create_admin_api_key(db: Session, admin: Admin, expires_at: Optional[datetime] = None) -> tuple[AdminApiKey, str]:
+    """Create a new API key for the admin and return (record, plaintext key)."""
+    token = "rk_" + secrets.token_urlsafe(32)
+    key_hash = sha256(token.encode()).hexdigest()
+    record = AdminApiKey(admin_id=admin.id, key_hash=key_hash, expires_at=expires_at)
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record, token
+
+
+def delete_admin_api_key(db: Session, admin: Admin, key_id: int) -> bool:
+    """Delete an API key by id if it belongs to the admin."""
+    record = (
+        db.query(AdminApiKey)
+        .filter(AdminApiKey.id == key_id, AdminApiKey.admin_id == admin.id)
+        .first()
+    )
+    if not record:
+        return False
+    db.delete(record)
+    db.commit()
+    return True
+
+
+def get_admin_api_key_by_token(db: Session, token: str) -> Optional[AdminApiKey]:
+    """Look up an API key record by its plaintext token."""
+    key_hash = sha256(token.encode()).hexdigest()
+    return db.query(AdminApiKey).filter(AdminApiKey.key_hash == key_hash).first()
 
 
 def get_admins(db: Session,
@@ -4320,19 +4367,20 @@ def get_node_usage_by_day(
 
 def get_admin_usage_by_nodes(db: Session, dbadmin: Admin, start: datetime, end: datetime) -> List[dict]:
     """
-    Retrieves uplink and downlink usage for all users under a specific admin within a date range,
-    grouped by node. Returns a list of dictionaries with node_id, node_name, uplink, and downlink.
+    Retrieves usage for all users under a specific admin within a date range, grouped by node.
+    Returns a list of dictionaries with node_id, node_name, uplink, downlink, and used_traffic (total).
     """
-    usages = []
+    usages: List[dict] = []
 
     # Initialize usage dictionary for all nodes
-    usage_by_node = {0: {"node_id": None, "node_name": "Master", "uplink": 0, "downlink": 0}}
+    usage_by_node: dict[int | None, dict] = {0: {"node_id": None, "node_name": "Master", "uplink": 0, "downlink": 0, "used_traffic": 0}}
     for node in db.query(Node).all():
         usage_by_node[node.id] = {
             "node_id": node.id,
             "node_name": node.name,
             "uplink": 0,
-            "downlink": 0
+            "downlink": 0,
+            "used_traffic": 0,
         }
 
     # Get all user IDs owned by this admin
@@ -4357,11 +4405,16 @@ def get_admin_usage_by_nodes(db: Session, dbadmin: Admin, start: datetime, end: 
         traffic = usage.used_traffic or 0
         try:
             usage_by_node[node_id]["downlink"] += traffic
+            usage_by_node[node_id]["used_traffic"] += traffic
         except KeyError:
             pass
 
     # Convert to list and filter out nodes with zero traffic
-    usages = [entry for entry in usage_by_node.values() if entry["uplink"] > 0 or entry["downlink"] > 0]
+    usages = [
+        entry
+        for entry in usage_by_node.values()
+        if entry.get("used_traffic", 0) > 0 or entry.get("uplink", 0) > 0 or entry.get("downlink", 0) > 0
+    ]
 
     return sorted(usages, key=lambda x: x["node_id"] or 0)
 

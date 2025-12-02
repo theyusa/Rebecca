@@ -13,6 +13,7 @@ import { XrayLogsPage } from "./XrayLogsPage";
 import ServicesPage from "./ServicesPage";
 import UsagePage from "./UsagePage";
 import { IntegrationSettingsPage } from "./IntegrationSettingsPage";
+import MyAccountPage from "./MyAccountPage";
 
 const fetchAdminLoader = async () => {
   try {
@@ -54,6 +55,10 @@ export const router = createHashRouter([
       {
         path: "admins",
         element: <AdminsPage />,
+      },
+      {
+        path: "myaccount",
+        element: <MyAccountPage />,
       },
       {
         path: "usage",

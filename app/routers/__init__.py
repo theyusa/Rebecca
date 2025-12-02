@@ -12,6 +12,7 @@ from . import (
     service_v2,
     user_v2,
     settings,
+    myaccount,
 )
 
 api_router = APIRouter()
@@ -29,6 +30,7 @@ routers = [
     service_v2.router,
     user_v2.router,
     settings.router,
+    myaccount.router,
 ]
 
 for router in routers:

@@ -59,6 +59,12 @@ class Admin(Base):
     status = Column(Enum(AdminStatus), nullable=False, default=AdminStatus.active, index=True)
     disabled_reason = Column(String(512), nullable=True, default=None)
     usage_logs = relationship("AdminUsageLogs", back_populates="admin")
+    api_keys = relationship(
+        "AdminApiKey",
+        back_populates="admin",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
 
 
 class AdminUsageLogs(Base):
@@ -69,6 +75,19 @@ class AdminUsageLogs(Base):
     admin = relationship("Admin", back_populates="usage_logs")
     used_traffic_at_reset = Column(BigInteger, nullable=False)
     reset_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AdminApiKey(Base):
+    __tablename__ = "admin_api_keys"
+
+    id = Column(Integer, primary_key=True)
+    admin_id = Column(Integer, ForeignKey("admins.id"), nullable=False, index=True)
+    key_hash = Column(String(128), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=True)
+    last_used_at = Column(DateTime, nullable=True)
+
+    admin = relationship("Admin", back_populates="api_keys")
 
 
 class TelegramSettings(Base):

@@ -1,5 +1,6 @@
 from enum import Enum
 from typing import Any, Dict, Optional, Union
+from datetime import datetime
 from collections.abc import Mapping
 
 from fastapi import Depends, HTTPException, status
@@ -101,6 +102,13 @@ class AdminPermissions(BaseModel):
     users: UserPermissionSettings = Field(default_factory=UserPermissionSettings)
     admin_management: AdminManagementPermissions = Field(default_factory=AdminManagementPermissions)
     sections: SectionPermissionSettings = Field(default_factory=SectionPermissionSettings)
+    self_permissions: Dict[str, bool] = Field(
+        default_factory=lambda: {
+            "self_myaccount": True,
+            "self_change_password": True,
+            "self_api_keys": True,
+        }
+    )
     model_config = ConfigDict(from_attributes=True)
 
     def merge(self, other: Dict[str, Any] | "AdminPermissions") -> "AdminPermissions":
@@ -146,6 +154,11 @@ ROLE_DEFAULT_PERMISSIONS: Dict[AdminRole, AdminPermissions] = {
             integrations=False,
             xray=False,
         ),
+        self_permissions={
+            "self_myaccount": True,
+            "self_change_password": True,
+            "self_api_keys": True,
+        },
     ),
     AdminRole.reseller: AdminPermissions(
         users=UserPermissionSettings(
@@ -173,6 +186,11 @@ ROLE_DEFAULT_PERMISSIONS: Dict[AdminRole, AdminPermissions] = {
             integrations=False,
             xray=False,
         ),
+        self_permissions={
+            "self_myaccount": True,
+            "self_change_password": True,
+            "self_api_keys": True,
+        },
     ),
     AdminRole.sudo: AdminPermissions(
         users=UserPermissionSettings(
@@ -200,6 +218,11 @@ ROLE_DEFAULT_PERMISSIONS: Dict[AdminRole, AdminPermissions] = {
             integrations=True,
             xray=True,
         ),
+        self_permissions={
+            "self_myaccount": True,
+            "self_change_password": True,
+            "self_api_keys": True,
+        },
     ),
     AdminRole.full_access: AdminPermissions(
         users=UserPermissionSettings(
@@ -227,6 +250,11 @@ ROLE_DEFAULT_PERMISSIONS: Dict[AdminRole, AdminPermissions] = {
             integrations=True,
             xray=True,
         ),
+        self_permissions={
+            "self_myaccount": True,
+            "self_change_password": True,
+            "self_api_keys": True,
+        },
     ),
 }
 
@@ -438,6 +466,23 @@ class Admin(BaseModel):
     def get_admin(cls, token: str, db: Session):
         payload = get_admin_payload(token)
         if not payload:
+            try:
+                api_key = crud.get_admin_api_key_by_token(db, token)
+            except Exception:
+                api_key = None
+            if api_key:
+                if api_key.expires_at and api_key.expires_at < datetime.utcnow():
+                    return
+                dbadmin = crud.get_admin_by_id(db, api_key.admin_id)
+                if not dbadmin or dbadmin.status != AdminStatus.active:
+                    return
+                api_key.last_used_at = datetime.utcnow()
+                try:
+                    db.add(api_key)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                return cls.model_validate(dbadmin)
             return
 
         role_name = payload.get("role")

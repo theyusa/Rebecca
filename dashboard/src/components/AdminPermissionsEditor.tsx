@@ -17,6 +17,7 @@ import {
   AdminManagementPermission,
   AdminPermissions,
   AdminSection,
+  SelfPermissionToggle,
   UserPermissionToggle,
 } from "types/Admin";
 
@@ -29,6 +30,7 @@ type AdminPermissionsEditorProps = {
   showReset?: boolean;
   onReset?: () => void;
   hideExtendedSections?: boolean;
+  isReadOnly?: boolean;
 };
 
 const userPermissionKeys: Array<{ key: UserPermissionToggle; label: string }> = [
@@ -68,10 +70,17 @@ const sectionPermissionKeys: Array<{ key: AdminSection; label: string }> = [
   { key: AdminSection.Xray, label: "admins.sections.xray" },
 ];
 
+const selfPermissionKeys: Array<{ key: SelfPermissionToggle; label: string }> = [
+  { key: SelfPermissionToggle.SelfMyAccount, label: "admins.self.myaccount" },
+  { key: SelfPermissionToggle.SelfChangePassword, label: "admins.self.changePassword" },
+  { key: SelfPermissionToggle.SelfApiKeys, label: "admins.self.apiKeys" },
+];
+
 type PermissionKeyMap = {
   users: UserPermissionToggle;
   admin_management: AdminManagementPermission;
   sections: AdminSection;
+  self_permissions: SelfPermissionToggle;
 };
 
 export const AdminPermissionsEditor = ({
@@ -83,6 +92,7 @@ export const AdminPermissionsEditor = ({
   showReset = false,
   onReset,
   hideExtendedSections = false,
+  isReadOnly = false,
 }: AdminPermissionsEditorProps) => {
   const { t } = useTranslation();
 
@@ -91,6 +101,7 @@ export const AdminPermissionsEditor = ({
     key: PermissionKeyMap[T],
     next: boolean
   ) => {
+    if (isReadOnly) return;
     const updatedSection = {
       ...value[section],
       [key]: next,
@@ -113,7 +124,7 @@ export const AdminPermissionsEditor = ({
           {t("admins.permissions.userCapabilities", "User capabilities")}
         </Text>
         {showReset && onReset && (
-          <Button size="xs" variant="ghost" onClick={onReset}>
+          <Button size="xs" variant="ghost" onClick={onReset} isDisabled={isReadOnly}>
             {t("admins.permissions.resetToDefaults", "Reset to defaults")}
           </Button>
         )}
@@ -131,6 +142,7 @@ export const AdminPermissionsEditor = ({
             <Text fontSize="sm">{t(label)}</Text>
             <Switch
               isChecked={Boolean(value.users[key])}
+              isDisabled={isReadOnly}
               onChange={(event) => updatePermissions("users", key, event.target.checked)}
             />
           </HStack>
@@ -157,7 +169,7 @@ export const AdminPermissionsEditor = ({
             placeholder={t("admins.permissions.maxDataHint", "Leave empty for unlimited")}
             value={maxDataLimitValue}
             onChange={handleMaxDataLimitChange}
-            isDisabled={!value.users.allow_unlimited_data}
+            isDisabled={!value.users.allow_unlimited_data || isReadOnly}
           />
         </Tooltip>
         {maxDataLimitError ? (
@@ -192,6 +204,7 @@ export const AdminPermissionsEditor = ({
                 <Text fontSize="sm">{t(label)}</Text>
                 <Switch
                   isChecked={Boolean(value.admin_management[key])}
+                  isDisabled={isReadOnly}
                   onChange={(event) =>
                     updatePermissions("admin_management", key, event.target.checked)
                   }
@@ -217,6 +230,7 @@ export const AdminPermissionsEditor = ({
                 <Text fontSize="sm">{t(label)}</Text>
                 <Switch
                   isChecked={Boolean(value.sections[key])}
+                  isDisabled={isReadOnly}
                   onChange={(event) => updatePermissions("sections", key, event.target.checked)}
                 />
               </HStack>
@@ -224,6 +238,28 @@ export const AdminPermissionsEditor = ({
           </SimpleGrid>
         </Stack>
       )}
+      <Stack spacing={3}>
+        <Text fontWeight="semibold">{t("admins.permissions.self.title")}</Text>
+        <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+          {selfPermissionKeys.map(({ key, label }) => (
+            <HStack
+              key={key}
+              justify="space-between"
+              borderWidth="1px"
+              borderRadius="md"
+              px={3}
+              py={2}
+            >
+              <Text fontSize="sm">{t(label)}</Text>
+              <Switch
+                isChecked={Boolean(value.self_permissions?.[key])}
+                isDisabled={isReadOnly}
+                onChange={(event) => updatePermissions("self_permissions", key, event.target.checked)}
+              />
+            </HStack>
+          ))}
+        </SimpleGrid>
+      </Stack>
     </Stack>
   );
 };
