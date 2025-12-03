@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db import Session, crud, get_db
 from app.db.exceptions import UsersLimitReachedError
-from app.dependencies import get_expired_users_list, get_validated_user, validate_dates
+from app.dependencies import get_validated_user, validate_dates
 from app.models.admin import Admin, AdminRole, UserPermission
 from app.models.user import (
     AdvancedUserAction,
@@ -67,25 +67,33 @@ def _ensure_custom_key_permission(admin: Admin, has_key: bool) -> None:
 @router.post("/user", response_model=UserResponse, status_code=status.HTTP_201_CREATED, responses={400: responses._400, 409: responses._409})
 @router.post("/v2/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED, responses={400: responses._400, 409: responses._409})
 def add_user(
-    payload: dict,
+    payload: Union[UserCreate, dict],
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
     admin: Admin = Depends(Admin.require_active),
 ):
     """
     Add a new user (service mode if service_id provided, otherwise no-service legacy mode).
+    
+    Compatible with Marzban API: accepts UserCreate directly when no service_id is provided.
     """
 
     admin.ensure_user_permission(UserPermission.create)
 
+    # Convert UserCreate to dict if needed, or use dict directly
+    if isinstance(payload, UserCreate):
+        payload_dict = payload.model_dump(exclude_none=True)
+    else:
+        payload_dict = payload
+
     # Normalize service_id=0 to None to allow "no service" creation
-    if payload.get("service_id") == 0:
-        payload["service_id"] = None
+    if payload_dict.get("service_id") == 0:
+        payload_dict["service_id"] = None
 
     # Service mode ----------------------------------------------------------
-    if payload.get("service_id") is not None:
+    if payload_dict.get("service_id") is not None:
         try:
-            service_payload = UserServiceCreate.model_validate(payload)
+            service_payload = UserServiceCreate.model_validate(payload_dict)
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
@@ -154,9 +162,14 @@ def add_user(
         logger.info(f'New user "{dbuser.username}" added via service {service.name}')
         return user
 
-    # No-service mode -------------------------------------------------------
+    # No-service mode (Marzban-compatible) ----------------------------------
     try:
-        new_user = UserCreate.model_validate(payload)
+        # Accept UserCreate directly for Marzban compatibility
+        if isinstance(payload, UserCreate):
+            new_user = payload
+        else:
+            new_user = UserCreate.model_validate(payload_dict)
+        
         admin.ensure_user_constraints(
             status_value=new_user.status.value if new_user.status else None,
             data_limit=new_user.data_limit,
@@ -166,6 +179,7 @@ def add_user(
         _ensure_flow_permission(admin, bool(new_user.flow))
         _ensure_custom_key_permission(admin, bool(new_user.credential_key))
 
+        # Validate protocols like Marzban does
         for proxy_type in new_user.proxies:
             if not xray.config.inbounds_by_protocol.get(proxy_type):
                 raise HTTPException(
@@ -447,37 +461,6 @@ def get_users(
     }
 
 
-@router.post("/users/reset", responses={403: responses._403, 404: responses._404})
-def reset_users_data_usage(
-    db: Session = Depends(get_db), admin: Admin = Depends(Admin.check_sudo_admin)
-):
-    """Reset all users data usage"""
-    admin.ensure_user_permission(UserPermission.reset_usage)
-    dbadmin = crud.get_admin(db, admin.username)
-    try:
-        crud.reset_all_users_data_usage(db=db, admin=dbadmin)
-    except UsersLimitReachedError as exc:
-        report.admin_users_limit_reached(admin, exc.limit, exc.current_active)
-        db.rollback()
-        raise HTTPException(status_code=400, detail=str(exc))
-    startup_config = xray.config.include_db_users()
-    xray.core.restart(startup_config)
-    for node_id, node in list(xray.nodes.items()):
-        if node.connected:
-            xray.operations.restart_node(node_id, startup_config)
-    return {"detail": "Users successfully reset."}
-
-
-@router.post("/users/fix-null-uuid", responses={403: responses._403})
-def fix_users_null_uuid_endpoint(
-    bg: BackgroundTasks,
-    db: Session = Depends(get_db),
-    admin: Admin = Depends(Admin.check_sudo_admin),
-):
-    """This endpoint has been removed."""
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint removed")
-
-
 @router.post("/users/actions", responses={403: responses._403})
 def perform_users_bulk_action(
     payload: BulkUsersActionRequest,
@@ -745,33 +728,11 @@ def set_owner(
     return user
 
 
-@router.get("/users/expired", response_model=List[str])
-def get_expired_users(
-    expired_after: Optional[datetime] = Query(None, example="2024-01-01T00:00:00"),
-    expired_before: Optional[datetime] = Query(None, example="2024-01-31T23:59:59"),
-    db: Session = Depends(get_db),
-    admin: Admin = Depends(Admin.get_current),
-):
-    """
-    Get users who have expired within the specified date range.
-
-    - **expired_after** UTC datetime (optional)
-    - **expired_before** UTC datetime (optional)
-    - At least one of expired_after or expired_before must be provided for filtering
-    - If both are omitted, returns all expired users
-    """
-
-    expired_after, expired_before = validate_dates(expired_after, expired_before)
-
-    expired_users = get_expired_users_list(db, admin, expired_after, expired_before)
-    return [u.username for u in expired_users]
-
-
 @router.delete("/users/expired", response_model=List[str])
 def delete_expired_users(
     bg: BackgroundTasks,
-    expired_after: Optional[datetime] = Query(None, example="2024-01-01T00:00:00"),
-    expired_before: Optional[datetime] = Query(None, example="2024-01-31T23:59:59"),
+    expired_after: Optional[datetime] = Query(None, examples=["2024-01-01T00:00:00"]),
+    expired_before: Optional[datetime] = Query(None, examples=["2024-01-31T23:59:59"]),
     db: Session = Depends(get_db),
     admin: Admin = Depends(Admin.get_current),
 ):
@@ -784,6 +745,7 @@ def delete_expired_users(
     """
     expired_after, expired_before = validate_dates(expired_after, expired_before)
 
+    from app.dependencies import get_expired_users_list
     expired_users = get_expired_users_list(db, admin, expired_after, expired_before)
     removed_users = [u.username for u in expired_users]
 

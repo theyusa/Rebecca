@@ -1,7 +1,7 @@
 import base64
 import string
 from collections import defaultdict
-from datetime import datetime as dt
+from datetime import datetime as dt, timezone
 from datetime import timedelta
 from typing import TYPE_CHECKING, List, Literal, Union
 
@@ -169,19 +169,19 @@ def setup_format_variables(extra_data: dict) -> dict:
     user_status = extra_data.get("status")
     expire_timestamp = extra_data.get("expire")
     on_hold_expire_duration = extra_data.get("on_hold_expire_duration")
-    now = dt.utcnow()
+    now = dt.now(timezone.utc)
     now_ts = now.timestamp()
 
     if user_status != UserStatus.on_hold:
         if expire_timestamp is not None and expire_timestamp >= 0:
-            seconds_left = expire_timestamp - int(dt.utcnow().timestamp())
-            expire_datetime = dt.fromtimestamp(expire_timestamp)
+            seconds_left = expire_timestamp - int(dt.now(timezone.utc).timestamp())
+            expire_datetime = dt.fromtimestamp(expire_timestamp, timezone.utc)
             expire_date = expire_datetime.date()
             jalali_expire_date = jd.fromgregorian(
                 year=expire_date.year, month=expire_date.month, day=expire_date.day
             ).strftime("%Y-%m-%d")
             if now_ts < expire_timestamp:
-                days_left = (expire_datetime - dt.utcnow()).days + 1
+                days_left = (expire_datetime - dt.now(timezone.utc)).days + 1
                 time_left = format_time_left(seconds_left)
             else:
                 days_left = "0"

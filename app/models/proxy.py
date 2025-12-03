@@ -77,8 +77,8 @@ class ProxySettings(BaseModel, use_enum_values=True):
 
     def dict(self, *, no_obj=False, **kwargs):
         if no_obj:
-            return json.loads(self.json())
-        return super().dict(**kwargs)
+            return json.loads(self.model_dump_json())
+        return super().model_dump(**kwargs)
 
 
 class VMessSettings(ProxySettings):

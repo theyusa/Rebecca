@@ -87,7 +87,7 @@ def get_validated_sub(
 
 def get_validated_sub_by_key(
         username: str,
-        credential_key: str = Path(..., regex="^[0-9a-fA-F-]{32,36}$"),
+        credential_key: str = Path(..., pattern="^[0-9a-fA-F-]{32,36}$"),
         db: Session = Depends(get_db),
 ) -> UserResponse:
     try:

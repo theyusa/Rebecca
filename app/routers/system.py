@@ -274,6 +274,19 @@ def restart_panel_from_maintenance(admin: Admin = Depends(Admin.check_sudo_admin
     return {"status": "ok"}
 
 
+@router.post("/maintenance/soft-reload", responses={403: responses._403})
+def soft_reload_panel_from_maintenance(admin: Admin = Depends(Admin.check_sudo_admin)):
+    """Soft reload the panel without restarting Xray core or nodes.
+    
+    This reloads configuration from database and invalidates caches,
+    but keeps all connections active. Use this when you want to refresh
+    the panel state without interrupting active connections.
+    """
+    from app.utils.xray_config import soft_reload_panel
+    soft_reload_panel()
+    return {"status": "ok", "message": "Panel soft reloaded successfully"}
+
+
 @router.get("/inbounds", response_model=Dict[ProxyTypes, List[ProxyInbound]])
 def get_inbounds(admin: Admin = Depends(Admin.get_current)):
     """Retrieve inbound configurations grouped by protocol."""

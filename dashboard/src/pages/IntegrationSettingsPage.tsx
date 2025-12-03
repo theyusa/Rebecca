@@ -74,7 +74,7 @@ type MaintenanceInfo = {
   node?: { image?: string; tag?: string } | null;
 };
 
-type MaintenanceAction = "update" | "restart";
+type MaintenanceAction = "update" | "restart" | "soft-reload";
 
 const flattenEventToggleValues = (source: Record<string, unknown>): Record<string, boolean> => {
   const result: Record<string, boolean> = {};
@@ -480,7 +480,7 @@ export const IntegrationSettingsPage = () => {
   }, [panelData]);
 
   const triggerMaintenanceAction = async (
-    path: "/maintenance/update" | "/maintenance/restart"
+    path: "/maintenance/update" | "/maintenance/restart" | "/maintenance/soft-reload"
   ): Promise<{ wentOffline: boolean }> => {
     try {
       await apiFetch(path, { method: "POST", timeout: 3000 });
@@ -499,10 +499,13 @@ export const IntegrationSettingsPage = () => {
     result: { wentOffline: boolean }
   ) => {
     setActiveMaintenanceAction(action);
-    generateSuccessMessage(
-      t(action === "update" ? "settings.panel.updateTriggered" : "settings.panel.restartTriggered"),
-      toast
-    );
+    let messageKey = "settings.panel.restartTriggered";
+    if (action === "update") {
+      messageKey = "settings.panel.updateTriggered";
+    } else if (action === "soft-reload") {
+      messageKey = "settings.panel.softReloadTriggered";
+    }
+    generateSuccessMessage(t(messageKey), toast);
     if (result.wentOffline) {
       toast({
         title: t("settings.panel.maintenanceOfflineNotice"),
@@ -534,6 +537,19 @@ export const IntegrationSettingsPage = () => {
       retry: false,
       onMutate: () => setActiveMaintenanceAction("restart"),
       onSuccess: (result) => handleMaintenanceSuccess("restart", result),
+      onError: (error) => {
+        setActiveMaintenanceAction(null);
+        generateErrorMessage(error, toast);
+      },
+    }
+  );
+
+  const softReloadMutation = useMutation(
+    () => triggerMaintenanceAction("/maintenance/soft-reload"),
+    {
+      retry: false,
+      onMutate: () => setActiveMaintenanceAction("soft-reload"),
+      onSuccess: (result) => handleMaintenanceSuccess("soft-reload", result),
       onError: (error) => {
         setActiveMaintenanceAction(null);
         generateErrorMessage(error, toast);
@@ -807,7 +823,9 @@ export const IntegrationSettingsPage = () => {
                         <Text fontSize="sm">
                           {activeMaintenanceAction === "update"
                             ? t("settings.panel.updateInProgressHint")
-                            : t("settings.panel.restartInProgressHint")}
+                            : activeMaintenanceAction === "restart"
+                            ? t("settings.panel.restartInProgressHint")
+                            : t("settings.panel.softReloadInProgressHint", "Soft reloading panel...")}
                         </Text>
                       </Alert>
                     )}
@@ -820,6 +838,15 @@ export const IntegrationSettingsPage = () => {
                         isLoading={updateMutation.isLoading}
                       >
                         {t("settings.panel.updateAction")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        colorScheme="blue"
+                        leftIcon={<ArrowPathIcon width={16} height={16} />}
+                        onClick={() => softReloadMutation.mutate()}
+                        isLoading={softReloadMutation.isLoading}
+                      >
+                        {t("settings.panel.softReloadAction", "Soft Reload")}
                       </Button>
                       <Button
                         size="sm"

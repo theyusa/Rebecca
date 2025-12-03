@@ -615,9 +615,42 @@ class UserResponse(User):
 
     @field_validator("proxies", mode="before")
     def validate_proxies(cls, v, values, **kwargs):
+        """
+        Convert proxies from database format to runtime format.
+        For UserResponse, we need to convert proxies to runtime format with proper UUIDs.
+        """
         if isinstance(v, list):
             v = {p.type: p.settings for p in v}
-        return super().validate_proxies(v, values, **kwargs)
+        
+        # Get credential_key from values if available (for UserResponse)
+        credential_key = None
+        if isinstance(values, dict):
+            credential_key = values.data.get("credential_key") if hasattr(values, "data") else values.get("credential_key")
+        
+        # Convert to ProxySettings first (for validation)
+        proxies_dict = super().validate_proxies(v, values, **kwargs)
+        
+        # If credential_key exists, convert proxies to runtime format
+        # This ensures UUIDs are generated from credential_key
+        if credential_key:
+            runtime_proxies = {}
+            for proxy_type, settings in proxies_dict.items():
+                try:
+                    # Convert to runtime format
+                    runtime_settings = runtime_proxy_settings(
+                        settings,
+                        proxy_type,
+                        credential_key,
+                        flow=values.data.get("flow") if hasattr(values, "data") else values.get("flow")
+                    )
+                    # Convert back to ProxySettings for validation
+                    runtime_proxies[proxy_type] = ProxySettings.from_dict(proxy_type, runtime_settings)
+                except Exception:
+                    # If conversion fails, use original settings
+                    runtime_proxies[proxy_type] = settings
+            return runtime_proxies
+        
+        return proxies_dict
 
     @field_validator("used_traffic", "lifetime_used_traffic", mode='before')
     def cast_to_int(cls, v):

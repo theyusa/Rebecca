@@ -15,9 +15,39 @@ def test_add_user(auth_client: TestClient):
             "data_limit_reset_strategy": "no_reset",
         }
         response = auth_client.post("/api/user", json=user_data)
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
         assert data["username"] == "testuser"
+
+
+def test_add_user_with_inbounds_marzban_compatible(auth_client: TestClient):
+    """Test that endpoint accepts inbounds in payload like Marzban"""
+    with patch(
+        "app.routers.user.xray.config.inbounds_by_protocol",
+        {"vmess": [{"tag": "VMess TCP"}, {"tag": "VMess WS"}], "vless": [{"tag": "VLESS TCP"}]},
+    ), patch(
+        "app.routers.user.xray.config.inbounds_by_tag",
+        {"VMess TCP": {}, "VMess WS": {}, "VLESS TCP": {}},
+    ):
+        user_data = {
+            "username": "testuser_marzban",
+            "proxies": {"vmess": {"id": "35e4e39c-7d5c-4f4b-8b71-558e4f37ff53"}},
+            "inbounds": {
+                "vmess": ["VMess TCP", "VMess WS"]
+            },
+            "expire": 1735689600,
+            "data_limit": 1073741824,
+            "data_limit_reset_strategy": "no_reset",
+        }
+        response = auth_client.post("/api/user", json=user_data)
+        assert response.status_code == 201
+        data = response.json()
+        assert data["username"] == "testuser_marzban"
+        # Verify inbounds are in response (Marzban-compatible)
+        assert "inbounds" in data
+        assert "vmess" in data["inbounds"]
+        assert "VMess TCP" in data["inbounds"]["vmess"]
+        assert "VMess WS" in data["inbounds"]["vmess"]
 
 
 def test_get_user(auth_client: TestClient):
@@ -211,10 +241,9 @@ def test_get_all_users_usage(auth_client: TestClient):
 
 
 def test_get_expired_users(auth_client: TestClient):
+    # This endpoint has been removed
     response = auth_client.get("/api/users/expired")
-    assert response.status_code == 200
-    data = response.json()
-    assert isinstance(data, list)
+    assert response.status_code == 405  # Method not allowed or endpoint removed
 
 
 def test_delete_expired_users(auth_client: TestClient):

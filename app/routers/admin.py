@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.exc import IntegrityError
@@ -51,8 +51,8 @@ def get_client_ip(request: Request) -> str:
 def validate_dates(start: str, end: str) -> tuple[datetime, datetime]:
     """Validate and parse start and end dates."""
     try:
-        start_date = datetime.fromisoformat(start.replace("Z", "+00:00")) if start else (datetime.utcnow() - timedelta(days=30))
-        end_date = datetime.fromisoformat(end.replace("Z", "+00:00")) if end else datetime.utcnow()
+        start_date = datetime.fromisoformat(start.replace("Z", "+00:00")) if start else (datetime.now(timezone.utc) - timedelta(days=30))
+        end_date = datetime.fromisoformat(end.replace("Z", "+00:00")) if end else datetime.now(timezone.utc)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use ISO 8601 (e.g., 2025-09-24T00:00:00)")
 

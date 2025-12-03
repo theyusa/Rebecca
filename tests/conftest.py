@@ -17,6 +17,9 @@ mock_xray.operations.restart_node = MagicMock()
 mock_xray.nodes = {}
 patch("app.reb_node.core", mock_xray).start()
 
+# Patch TelegramSettingsService to avoid external DB connections in tests
+patch("app.utils.report._event_enabled", return_value=False).start()
+
 # Mock get_public_ip and xray before importing app
 app = None
 with (

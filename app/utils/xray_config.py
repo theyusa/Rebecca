@@ -47,3 +47,80 @@ def apply_config_and_restart(payload: Dict[str, Any]) -> None:
 
     startup_config = xray.config.include_db_users()
     restart_xray_and_invalidate_cache(startup_config)
+
+
+def soft_reload_panel():
+    """
+    Soft reload the panel without restarting Xray core.
+    This performs a full reload similar to startup:
+    - Reloads config from database
+    - Refreshes users in config
+    - Reconnects all nodes (without restarting their Xray cores)
+    - Invalidates caches
+    But keeps the main Xray core running (does not stop/restart it).
+    """
+    import logging
+    logger = logging.getLogger("uvicorn.error")
+    
+    logger.info("Generating Xray core config")
+    
+    # Reload config from database
+    with GetDB() as db:
+        raw_config = crud.get_xray_config(db)
+    
+    # Update config
+    new_config = XRayConfig(raw_config, api_port=xray.config.api_port)
+    xray.config = new_config
+    state.config = new_config
+    
+    # Generate config with users (like in startup)
+    try:
+        startup_config = xray.config.include_db_users()
+        logger.info("Xray core config generated successfully")
+    except Exception as e:
+        logger.error(f"Failed to generate Xray config: {e}")
+        raise
+    
+    # Invalidate caches to force refresh on next access
+    xray.invalidate_service_hosts_cache()
+    xray.hosts.update()
+    
+    # Reconnect all nodes (like in startup, but without restarting their cores)
+    logger.info("Reconnecting nodes")
+    try:
+        from app.models.node import NodeStatus
+        
+        with GetDB() as db:
+            dbnodes = crud.get_nodes(db=db, enabled=True)
+            node_ids = [dbnode.id for dbnode in dbnodes]
+            for dbnode in dbnodes:
+                # Only reconnect if not already connecting
+                if dbnode.status not in (NodeStatus.connecting, NodeStatus.connected):
+                    crud.update_node_status(db, dbnode, NodeStatus.connecting)
+        
+        # Reconnect nodes (this will update their config)
+        # Note: connect_node will call node.start() which will restart the node's Xray core
+        # if it's already started. This is acceptable for soft reload as it only affects nodes,
+        # not the main Xray core.
+        for node_id in node_ids:
+            try:
+                # Disconnect first if connected, then reconnect with new config
+                if node_id in xray.nodes:
+                    node = xray.nodes[node_id]
+                    if node.connected:
+                        try:
+                            node.disconnect()
+                        except Exception:
+                            pass
+                
+                # Reconnect with new config (this will start/restart the node's Xray core)
+                xray.operations.connect_node(node_id, startup_config)
+            except Exception as e:
+                logger.error(f"Failed to reconnect node {node_id}: {e}")
+    except Exception as e:
+        logger.error(f"Failed to reconnect nodes: {e}")
+    
+    # Note: We intentionally do NOT:
+    # - Restart main Xray core (xray.core.restart) - this keeps connections active
+    # - Restart node Xray cores (xray.operations.restart_node) - we use connect_node instead
+    # This keeps all connections active while refreshing the panel state

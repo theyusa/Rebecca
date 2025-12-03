@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy.orm import Session
@@ -41,7 +41,7 @@ def reset_user_by_next_report(db: Session, user: User):
 
 
 def review():
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     now_ts = now.timestamp()
     with GetDB() as db:
         last_id: Optional[int] = None
