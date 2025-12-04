@@ -125,22 +125,36 @@ def serialize_proxy_settings(
 
 
 def apply_credentials_to_settings(
-    settings: ProxySettings,
-    proxy_type: ProxyTypes,
+    settings: ProxySettings | dict,
+    proxy_type: ProxyTypes | str,
     credential_key: Optional[str],
-) -> None:
+) -> ProxySettings:
+    """
+    Ensure settings carry credentials derived from credential_key.
+    Accepts proxy_type as enum or string and settings as ProxySettings or dict.
+    Returns a ProxySettings instance (also mutated in place when possible).
+    """
+    try:
+        resolved_type = proxy_type if isinstance(proxy_type, ProxyTypes) else ProxyTypes(str(proxy_type))
+    except Exception:
+        return settings if isinstance(settings, ProxySettings) else settings  # type: ignore[return-value]
+
+    settings_obj = settings if isinstance(settings, ProxySettings) else ProxySettings.from_dict(resolved_type, settings)
+
     if not credential_key:
-        return
+        return settings_obj
 
     normalized = normalize_key(credential_key)
-    if proxy_type in UUID_PROTOCOLS:
-        setattr(settings, "id", key_to_uuid(normalized, proxy_type))
-    if proxy_type == ProxyTypes.Trojan:
-        setattr(settings, "password", key_to_password(normalized, proxy_type.value))
-    if proxy_type == ProxyTypes.Shadowsocks:
-        setattr(settings, "password", key_to_password(normalized, proxy_type.value))
-        if getattr(settings, "method", None) is None:
-            settings.method = ShadowsocksMethods.CHACHA20_POLY1305
+    if resolved_type in UUID_PROTOCOLS:
+        setattr(settings_obj, "id", key_to_uuid(normalized, resolved_type))
+    if resolved_type == ProxyTypes.Trojan:
+        setattr(settings_obj, "password", key_to_password(normalized, resolved_type.value))
+    if resolved_type == ProxyTypes.Shadowsocks:
+        setattr(settings_obj, "password", key_to_password(normalized, resolved_type.value))
+        if getattr(settings_obj, "method", None) is None:
+            settings_obj.method = ShadowsocksMethods.CHACHA20_POLY1305
+
+    return settings_obj
 
 
 def runtime_proxy_settings(

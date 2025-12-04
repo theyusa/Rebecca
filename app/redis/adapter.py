@@ -14,6 +14,7 @@ from app.models.user import UserResponse
 from app.utils.jwt import get_subscription_payload
 from app.utils.credentials import normalize_key
 from sqlalchemy import func
+import config
 from app.redis.client import get_redis
 from app.redis.subscription import (
     check_username_exists,
@@ -38,6 +39,8 @@ def _to_utc_aware(dt: Optional[datetime]) -> Optional[datetime]:
 
 def is_redis_available() -> bool:
     """Check if Redis is available and working."""
+    if not getattr(config, "REDIS_ENABLED", False):
+        return False
     redis_client = get_redis()
     if not redis_client:
         return False

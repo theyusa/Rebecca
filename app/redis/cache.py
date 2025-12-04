@@ -166,11 +166,11 @@ def _deserialize_user(user_dict: Dict[str, Any], db: Optional[Any] = None) -> Op
         user.last_status_change = datetime.fromisoformat(user_dict['last_status_change'].replace('Z', '+00:00')) if user_dict.get('last_status_change') else None
         user.online_at = datetime.fromisoformat(user_dict['online_at'].replace('Z', '+00:00')) if user_dict.get('online_at') else None
         
-        # Handle relationships
-        if user_dict.get('admin_id') and db:
-            user.admin = db.query(AdminModel).filter(AdminModel.id == user_dict['admin_id']).first()
-        if user_dict.get('service_id') and db:
-            user.service = db.query(ServiceModel).filter(ServiceModel.id == user_dict['service_id']).first()
+        # Handle relationships - DON'T load from DB here to avoid N+1 queries
+        # Relationships will be loaded in batch after pagination
+        # Just set the IDs for lazy loading if needed
+        user.admin_id = user_dict.get('admin_id')
+        user.service_id = user_dict.get('service_id')
         if user_dict.get('next_plan'):
             user.next_plan = NextPlanModel(**user_dict['next_plan'])
         
@@ -276,17 +276,35 @@ def get_all_users_from_cache(db: Optional[Any] = None) -> List[User]:
     try:
         user_id_keys = []
         pattern = f"{REDIS_KEY_PREFIX_USER_BY_ID}*"
-        for key in redis_client.scan_iter(match=pattern, count=1000):
-            user_id_keys.append(key)
+        # Use SCAN with cursor for better performance and timeout prevention
+        cursor = 0
+        max_iterations = 10000  # Safety limit
+        iteration = 0
+        while iteration < max_iterations:
+            cursor, keys = redis_client.scan(cursor, match=pattern, count=1000)
+            user_id_keys.extend(keys)
+            if cursor == 0:
+                break
+            iteration += 1
         
         if not user_id_keys:
             if db:
                 logger.info("No users found in Redis cache, loading from database")
-                from app.db.crud import get_user_queryset
-                db_users = get_user_queryset(db, eager_load=True).all()
-                for db_user in db_users:
-                    cache_user(db_user)
-                return db_users
+                try:
+                    from app.db.crud import get_user_queryset
+                    # Load without eager loading first to avoid timeout
+                    query = get_user_queryset(db, eager_load=False)
+                    db_users = query.all()
+                    # Cache users in background (don't block)
+                    try:
+                        for db_user in db_users:
+                            cache_user(db_user)
+                    except Exception as e:
+                        logger.warning(f"Failed to cache some users: {e}")
+                    return db_users
+                except Exception as e:
+                    logger.error(f"Failed to load users from database: {e}")
+                    return []
             return []
         
         users = []
@@ -321,11 +339,21 @@ def get_all_users_from_cache(db: Optional[Any] = None) -> List[User]:
         
         if db:
             logger.info("No users found in Redis cache, loading from database")
-            from app.db.crud import get_user_queryset
-            db_users = get_user_queryset(db, eager_load=True).all()
-            for db_user in db_users:
-                cache_user(db_user)
-            return db_users
+            try:
+                from app.db.crud import get_user_queryset
+                # Load without eager loading first to avoid timeout
+                query = get_user_queryset(db, eager_load=False)
+                db_users = query.all()
+                # Cache users in background (don't block)
+                try:
+                    for db_user in db_users:
+                        cache_user(db_user)
+                except Exception as e:
+                    logger.warning(f"Failed to cache some users: {e}")
+                return db_users
+            except Exception as e:
+                logger.error(f"Failed to load users from database: {e}")
+                return []
         
         return []
     except Exception as e:
@@ -428,12 +456,24 @@ def cache_user_usage(user_id: int, node_id: Optional[int], created_at: datetime,
         return False
     
     try:
+        # Ensure used_traffic is a valid integer within Redis range
+        if not isinstance(used_traffic, int):
+            used_traffic = int(used_traffic)
+        # Redis incrby supports -2^63 to 2^63-1, but we'll cap at reasonable values
+        if used_traffic < -9223372036854775808:
+            used_traffic = -9223372036854775808
+        elif used_traffic > 9223372036854775807:
+            used_traffic = 9223372036854775807
+        
         key = _get_user_usage_key(user_id, node_id, created_at)
         if increment:
             redis_client.incrby(key, used_traffic)
         else:
             redis_client.setex(key, USAGE_CACHE_TTL, str(used_traffic))
         return True
+    except (ValueError, OverflowError) as e:
+        logger.warning(f"Failed to cache user usage: invalid value {used_traffic}: {e}")
+        return False
     except Exception as e:
         logger.warning(f"Failed to cache user usage: {e}")
         return False

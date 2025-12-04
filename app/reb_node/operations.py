@@ -131,6 +131,42 @@ def _build_runtime_accounts(
     return accounts
 
 
+def _prepare_user_for_runtime(dbuser: "DBUser") -> "DBUser":
+    """
+    Ensure proxies/excluded_inbounds are loaded and attached before touching Xray.
+    Background tasks may run after the original DB session is closed, so we
+    reload the user if needed.
+    """
+    if dbuser is None:
+        return dbuser
+
+    user_id = getattr(dbuser, "id", None)
+    try:
+        for proxy in getattr(dbuser, "proxies", []) or []:
+            _ = list(proxy.excluded_inbounds)
+        return dbuser
+    except Exception:
+        pass
+
+    if user_id is None:
+        return dbuser
+
+    try:
+        with GetDB() as db:
+            fresh = crud.get_user(db, user_id=user_id)
+            if fresh:
+                try:
+                    for proxy in getattr(fresh, "proxies", []) or []:
+                        _ = list(proxy.excluded_inbounds)
+                except Exception:
+                    pass
+                return fresh
+    except Exception as exc:
+        logger.warning("Failed to reload user %s for Xray sync: %s", user_id, exc)
+
+    return dbuser
+
+
 @threaded_function
 def _add_account_to_inbound(api: XRayAPI, inbound_tag: str, account: Account):
     """
@@ -172,6 +208,9 @@ def _alter_inbound_user(api: XRayAPI, inbound_tag: str, accounts: List[Account])
 
 
 def add_user(dbuser: "DBUser"):
+    dbuser = _prepare_user_for_runtime(dbuser)
+    if not dbuser:
+        return
     user = UserResponse.model_validate(dbuser)
 
     for proxy_type, inbound_tags in user.inbounds.items():
@@ -202,6 +241,9 @@ def add_user(dbuser: "DBUser"):
 
 
 def remove_user(dbuser: "DBUser"):
+    dbuser = _prepare_user_for_runtime(dbuser)
+    if not dbuser:
+        return
     email = f"{dbuser.id}.{dbuser.username}"
 
     for inbound_tag in state.config.inbounds_by_tag:
@@ -212,6 +254,9 @@ def remove_user(dbuser: "DBUser"):
 
 
 def update_user(dbuser: "DBUser"):
+    dbuser = _prepare_user_for_runtime(dbuser)
+    if not dbuser:
+        return
     if dbuser.proxies:
         for proxy in dbuser.proxies:
             _ = list(proxy.excluded_inbounds)

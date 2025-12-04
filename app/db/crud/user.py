@@ -68,7 +68,7 @@ def get_user_queryset(db: Session, eager_load: bool = True) -> Query:
         # Use joinedload for many-to-one relationships (single row per user)
         options = [
             joinedload(User.admin),  # many-to-one: one admin per user
-            selectinload(User.proxies),  # one-to-many: multiple proxies per user
+            selectinload(User.proxies).selectinload(Proxy.excluded_inbounds),
             selectinload(User.usage_logs),  # one-to-many: for lifetime_used_traffic
         ]
         if _next_plan_table_exists(db):
@@ -424,11 +424,11 @@ def get_users(db: Session, offset: Optional[int] = None, limit: Optional[int] = 
         from config import REDIS_ENABLED
         
         if REDIS_ENABLED and get_redis():
-            # Get all users from Redis
+            # Get all users from Redis (this is fast, just deserializes basic data)
             all_users = get_all_users_from_cache(db)
             
             if all_users:
-                # Filter in memory
+                # Filter in memory (fast operation)
                 filtered_users = _filter_users_in_memory(
                     all_users,
                     usernames=usernames,
@@ -441,7 +441,7 @@ def get_users(db: Session, offset: Optional[int] = None, limit: Optional[int] = 
                     reset_strategy=reset_strategy,
                 )
                 
-                # Sort
+                # Sort (fast operation on filtered list)
                 if sort:
                     for sort_opt in reversed(sort):  # Apply sorts in reverse order
                         sort_str = str(sort_opt.value).lower()
@@ -458,123 +458,126 @@ def get_users(db: Session, offset: Optional[int] = None, limit: Optional[int] = 
                         elif 'expire' in sort_str:
                             filtered_users.sort(key=lambda u: u.expire or datetime.max.replace(tzinfo=timezone.utc) if u.expire else datetime.min.replace(tzinfo=timezone.utc), reverse=reverse)
                 
-                # Get count before pagination
+                # Get count before pagination (for return_with_count)
                 count = len(filtered_users) if return_with_count else None
                 
-                # Pagination
+                # Pagination BEFORE loading relationships (critical for performance)
                 if offset:
                     filtered_users = filtered_users[offset:]
                 if limit:
                     filtered_users = filtered_users[:limit]
-                
-                if filtered_users:
-                    user_ids = [u.id for u in filtered_users]
-                    query = db.query(User).filter(User.id.in_(user_ids))
-                    query = query.options(
-                        joinedload(User.admin),  # many-to-one: one admin per user
-                        selectinload(User.proxies),  # one-to-many: multiple proxies per user
-                    )
-                    if _next_plan_table_exists(db):
-                        query = query.options(joinedload(User.next_plan))
-                    
-                    db_users = query.all()
-                    db_users_dict = {u.id: u for u in db_users}
-                    final_users = [db_users_dict.get(u.id, u) for u in filtered_users if u.id in db_users_dict]
-                else:
-                    final_users = []
-                
+
+                # Redis-first path: return cached users directly (avoid DB round-trips).
+                final_users = filtered_users or []
+
                 if return_with_count:
                     return final_users, count
                 return final_users
     except Exception as e:
-        _logger.debug(f"Failed to get users from Redis cache: {e}")
+        _logger.warning(f"Failed to get users from Redis cache, falling back to DB: {e}")
+        # Ensure we continue to DB fallback even if Redis fails
     
-    query = get_user_queryset(db, eager_load=False)
-    query = _apply_advanced_user_filters(
-        query,
-        advanced_filters,
-        datetime.now(timezone.utc),
-    )
-
-    if search:
-        like_pattern = f"%{search}%"
-        key_candidates, uuid_candidates = _derive_search_tokens(search)
-        search_clauses = [
-            User.username.ilike(like_pattern),
-            User.note.ilike(like_pattern),
-            User.credential_key.ilike(like_pattern),
-        ]
-        if key_candidates:
-            search_clauses.append(User.credential_key.in_(key_candidates))
-        if uuid_candidates:
-            proxy_exists = exists().where(
-                and_(
-                    Proxy.user_id == User.id,
-                    Proxy.settings["id"].as_string().in_(uuid_candidates)
-                )
-            )
-            search_clauses.append(proxy_exists)
-        query = query.filter(or_(*search_clauses))
-
-    if usernames:
-        query = query.filter(User.username.in_(usernames))
-
-    if status:
-        if isinstance(status, list):
-            query = query.filter(User.status.in_(status))
-        else:
-            query = query.filter(User.status == status)
-
-    if service_id is not None:
-        query = query.filter(User.service_id == service_id)
-
-    if reset_strategy:
-        if isinstance(reset_strategy, list):
-            query = query.filter(User.data_limit_reset_strategy.in_(reset_strategy))
-        else:
-            query = query.filter(User.data_limit_reset_strategy == reset_strategy)
-
-    if admin:
-        query = query.filter(User.admin == admin)
-
-    if admins:
-        query = query.filter(User.admin.has(Admin.username.in_(admins)))
-
-    count = None
-    if return_with_count:
-        # Use func.count() directly for better performance
-        count = query.with_entities(func.count(User.id)).scalar() or 0
-
-    query = query.options(
-        joinedload(User.admin),
-        joinedload(User.service),
-        selectinload(User.proxies),
-    )
-    if _next_plan_table_exists(db):
-        query = query.options(joinedload(User.next_plan))
-
-    if sort:
-        query = query.order_by(*(opt.value for opt in sort))
-
-    if offset:
-        query = query.offset(offset)
-    if limit:
-        query = query.limit(limit)
-
-    users = query.all()
-    
-    # Cache users in Redis for future queries
+    # Fallback to direct DB query
     try:
-        from app.redis.cache import cache_user
-        for user in users:
-            cache_user(user)
+        query = get_user_queryset(db, eager_load=False)
+        query = _apply_advanced_user_filters(
+            query,
+            advanced_filters,
+            datetime.now(timezone.utc),
+        )
+
+        if search:
+            like_pattern = f"%{search}%"
+            key_candidates, uuid_candidates = _derive_search_tokens(search)
+            search_clauses = [
+                User.username.ilike(like_pattern),
+                User.note.ilike(like_pattern),
+                User.credential_key.ilike(like_pattern),
+            ]
+            if key_candidates:
+                search_clauses.append(User.credential_key.in_(key_candidates))
+            if uuid_candidates:
+                proxy_exists = exists().where(
+                    and_(
+                        Proxy.user_id == User.id,
+                        Proxy.settings["id"].as_string().in_(uuid_candidates)
+                    )
+                )
+                search_clauses.append(proxy_exists)
+            query = query.filter(or_(*search_clauses))
+
+        if usernames:
+            query = query.filter(User.username.in_(usernames))
+
+        if status:
+            if isinstance(status, list):
+                query = query.filter(User.status.in_(status))
+            else:
+                query = query.filter(User.status == status)
+
+        if service_id is not None:
+            query = query.filter(User.service_id == service_id)
+
+        if reset_strategy:
+            if isinstance(reset_strategy, list):
+                query = query.filter(User.data_limit_reset_strategy.in_(reset_strategy))
+            else:
+                query = query.filter(User.data_limit_reset_strategy == reset_strategy)
+
+        if admin:
+            query = query.filter(User.admin == admin)
+
+        if admins:
+            query = query.filter(User.admin.has(Admin.username.in_(admins)))
+
+        count = None
+        if return_with_count:
+            # Use func.count() directly for better performance
+            count = query.with_entities(func.count(User.id)).scalar() or 0
+
+        query = query.options(
+            joinedload(User.admin),
+            joinedload(User.service),
+            selectinload(User.proxies),
+        )
+        if _next_plan_table_exists(db):
+            query = query.options(joinedload(User.next_plan))
+
+        if sort:
+            query = query.order_by(*(opt.value for opt in sort))
+
+        if offset:
+            query = query.offset(offset)
+        if limit:
+            query = query.limit(limit)
+
+        try:
+            users = query.all()
+        except Exception as e:
+            _logger.error(f"Failed to execute get_users query: {e}")
+            # Return empty list on error to prevent crash
+            if return_with_count:
+                return [], 0
+            return []
+        
+        # Cache users in Redis for future queries
+        try:
+            from app.redis.cache import cache_user
+            for user in users:
+                cache_user(user)
+        except Exception as e:
+            _logger.debug(f"Failed to cache users in Redis: {e}")
+
+        if return_with_count:
+            return users, count
+
+        return users
     except Exception as e:
-        _logger.debug(f"Failed to cache users in Redis: {e}")
-
-    if return_with_count:
-        return users, count
-
-    return users
+        _logger.error(f"Failed to get users from database: {e}")
+        # Return empty result on error to prevent crash
+        if return_with_count:
+            return [], 0
+        return []
 
 def get_users_count(db: Session, status: UserStatus = None, admin: Admin = None) -> int:
     """Retrieves the count of users based on status and admin filters."""
@@ -723,6 +726,12 @@ def create_user(db: Session, user: UserCreate, admin: Admin = None, service: Opt
 
     db.commit()
     db.refresh(dbuser)
+    # Make sure proxy relationships are loaded before returning (background tasks may run after the session closes)
+    try:
+        for proxy in dbuser.proxies:
+            _ = list(proxy.excluded_inbounds)
+    except Exception as e:  # pragma: no cover - defensive logging
+        _logger.debug("Failed to pre-load proxy relationships for user %s: %s", dbuser.username, e)
     
     # Cache user in Redis
     try:
@@ -907,6 +916,12 @@ def update_user(db: Session, dbuser: User, modify: UserModify, *, service: Optio
 
     db.commit()
     db.refresh(dbuser)
+    # Ensure proxy relationships/excluded inbounds are loaded before returning (background tasks/Xray sync)
+    try:
+        for proxy in dbuser.proxies:
+            _ = list(proxy.excluded_inbounds)
+    except Exception as e:  # pragma: no cover - defensive logging
+        _logger.debug("Failed to pre-load proxy relationships for updated user %s: %s", dbuser.username, e)
     
     # Update user in Redis cache
     try:
@@ -992,24 +1007,32 @@ def update_user_sub(db: Session, dbuser: User, user_agent: str) -> User:
 
     max_attempts = 3
     attempts = 0
+    # Get user ID first (works for both User and UserResponse)
+    user_id = dbuser.id if hasattr(dbuser, 'id') else None
+    if not user_id:
+        raise ValueError("User object must have an id attribute")
+    
     while attempts < max_attempts:
         attempts += 1
+        # Always fetch fresh user from DB to ensure it's in session
+        dbuser = db.query(User).filter(User.id == user_id).with_for_update().first()
+        if not dbuser:
+            raise ValueError(f"User with id {user_id} not found")
+        
         dbuser.sub_updated_at = datetime.now(timezone.utc)
         dbuser.sub_last_user_agent = user_agent
         try:
             db.commit()
-            if hasattr(dbuser, "_sa_instance_state"):
-                db.refresh(dbuser)
+            db.refresh(dbuser)
             return dbuser
         except OperationalError as exc:
             db.rollback()
             if not _is_record_changed_error(exc) or attempts >= max_attempts:
                 raise
             # Re-fetch the user to ensure we start from the latest row state
-            refreshed = db.get(User, dbuser.id)
-            if refreshed is None:
+            dbuser = db.query(User).filter(User.id == user_id).with_for_update().first()
+            if not dbuser:
                 raise
-            dbuser = refreshed
             continue
 
 def _sync_user_status_from_expire(db: Session, dbuser: User, now: float) -> None:

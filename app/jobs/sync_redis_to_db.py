@@ -83,21 +83,20 @@ def sync_usage_updates_to_db():
             if not users_usage:
                 return
             
-            # Update users' used_traffic
-            stmt = update(User). \
-                where(User.id == bindparam('uid')). \
-                values(
-                    used_traffic=User.used_traffic + bindparam('value'),
-                    online_at=bindparam('online_at')
-                )
+            # Fetch current values and prepare updates
+            user_ids = [u['uid'] for u in users_usage]
+            current_users = db.query(User).filter(User.id.in_(user_ids)).all()
+            user_dict = {u.id: u for u in current_users}
             
-            # Add online_at to each update
+            # Update each user individually to ensure proper SQLAlchemy handling
             for usage in users_usage:
                 user_id = usage['uid']
-                usage['online_at'] = user_updates[user_id]['online_at'] or datetime.utcnow()
+                user = user_dict.get(user_id)
+                if user:
+                    user.used_traffic = (user.used_traffic or 0) + usage['value']
+                    user.online_at = user_updates[user_id]['online_at'] or datetime.now(timezone.utc)
             
-            # Execute batch update
-            db.execute(stmt, users_usage, execution_options={"synchronize_session": None})
+            db.commit()
             
             # Update admin usage statistics
             user_ids = [u['uid'] for u in users_usage]

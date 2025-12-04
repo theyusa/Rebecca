@@ -648,8 +648,26 @@ class UserResponse(User):
     @model_validator(mode="after")
     def populate_proxy_credentials(self):
         if self.credential_key:
+            updated_proxies = {}
             for proxy_type, settings in self.proxies.items():
-                apply_credentials_to_settings(settings, proxy_type, self.credential_key)
+                try:
+                    resolved_type = proxy_type if isinstance(proxy_type, ProxyTypes) else ProxyTypes(str(proxy_type))
+                except Exception:
+                    continue
+
+                # Ensure settings is a ProxySettings instance
+                settings_obj = settings
+                if not isinstance(settings_obj, ProxySettings):
+                    try:
+                        settings_obj = ProxySettings.from_dict(resolved_type, settings)
+                    except Exception:
+                        continue
+
+                apply_credentials_to_settings(settings_obj, resolved_type, self.credential_key)
+                updated_proxies[resolved_type] = settings_obj
+
+            if updated_proxies:
+                self.proxies = updated_proxies
         return self
 
     @field_validator("proxies", mode="before")
@@ -668,6 +686,16 @@ class UserResponse(User):
         
         # Convert to ProxySettings first (for validation)
         proxies_dict = super().validate_proxies(v, values, **kwargs)
+
+        # Coerce keys to ProxyTypes for consistency
+        coerced_proxies: Dict[ProxyTypes, ProxySettings] = {}
+        for proxy_type, settings in proxies_dict.items():
+            try:
+                resolved_type = proxy_type if isinstance(proxy_type, ProxyTypes) else ProxyTypes(str(proxy_type))
+            except Exception:
+                continue
+            coerced_proxies[resolved_type] = settings
+        proxies_dict = coerced_proxies
         
         # If credential_key exists, convert proxies to runtime format
         # This ensures UUIDs are generated from credential_key

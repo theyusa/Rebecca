@@ -1,6 +1,9 @@
 import logging
 import os
 import sys
+import warnings
+
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated", category=UserWarning)
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Request, status

@@ -65,18 +65,25 @@ def record_user_stats(params: list, node_id: Union[int, None],
 
     created_at = datetime.fromisoformat(datetime.utcnow().strftime('%Y-%m-%dT%H:00:00'))
 
-    # Try to write to Redis first
+    # Try to write to Redis first (only if Redis is enabled)
     from app.redis.cache import cache_user_usage_snapshot
     from app.redis.client import get_redis
     from app.redis.pending_backup import save_usage_snapshots_backup
+    from config import REDIS_ENABLED
     
-    redis_client = get_redis()
+    redis_client = get_redis() if REDIS_ENABLED else None
     if redis_client:
         # Prepare snapshots for backup
         user_snapshots = []
         for p in params:
             uid = int(p['uid'])
-            value = int(p['value']) * consumption_factor
+            # Ensure value is a valid integer
+            raw_value = p.get('value', 0)
+            try:
+                value = int(float(raw_value)) * consumption_factor
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid usage value for user {uid}: {raw_value}")
+                continue
             cache_user_usage_snapshot(uid, node_id, created_at, value)
             user_snapshots.append({
                 'user_id': uid,
@@ -133,12 +140,13 @@ def record_node_stats(params: dict, node_id: Union[int, None]):
 
     status_change_payload = None
 
-    # Try to write to Redis first
+    # Try to write to Redis first (only if Redis is enabled)
     from app.redis.cache import cache_node_usage_snapshot
     from app.redis.client import get_redis
     from app.redis.pending_backup import save_usage_snapshots_backup
+    from config import REDIS_ENABLED
     
-    redis_client = get_redis()
+    redis_client = get_redis() if REDIS_ENABLED else None
     if redis_client:
         # Write to Redis
         cache_node_usage_snapshot(node_id, created_at, total_up, total_down)
@@ -207,10 +215,6 @@ def record_node_stats(params: dict, node_id: Union[int, None]):
     else:
         # Fallback to direct DB write if Redis is not available
         with GetDB() as db:
-            master_record = None
-            if node_id is None:
-                master_record = crud._ensure_master_state(db, for_update=True)
-
             # make node usage row if doesn't exist
             select_stmt = select(NodeUsage.node_id). \
                 where(and_(NodeUsage.node_id == node_id, NodeUsage.created_at == created_at))
@@ -226,56 +230,55 @@ def record_node_stats(params: dict, node_id: Union[int, None]):
 
             safe_execute(db, stmt, params)
 
-        if node_id is not None and (total_up or total_down):
-            dbnode = db.query(Node).filter(Node.id == node_id).with_for_update().first()
-            if dbnode:
-                dbnode.uplink = (dbnode.uplink or 0) + total_up
-                dbnode.downlink = (dbnode.downlink or 0) + total_down
+            if node_id is not None and (total_up or total_down):
+                dbnode = db.query(Node).filter(Node.id == node_id).with_for_update().first()
+                if dbnode:
+                    dbnode.uplink = (dbnode.uplink or 0) + total_up
+                    dbnode.downlink = (dbnode.downlink or 0) + total_down
 
-                current_usage = (dbnode.uplink or 0) + (dbnode.downlink or 0)
-                limit = dbnode.data_limit
+                    current_usage = (dbnode.uplink or 0) + (dbnode.downlink or 0)
+                    limit = dbnode.data_limit
+
+                    if limit is not None and current_usage >= limit:
+                        if dbnode.status != NodeStatus.limited:
+                            previous_status = dbnode.status
+                            dbnode.status = NodeStatus.limited
+                            dbnode.message = "Data limit reached"
+                            dbnode.xray_version = None
+                            dbnode.last_status_change = datetime.utcnow()
+                            limited_triggered = True
+                            status_change_payload = (NodeResponse.model_validate(dbnode), previous_status)
+                    else:
+                        if dbnode.status == NodeStatus.limited:
+                            previous_status = dbnode.status
+                            dbnode.status = NodeStatus.connecting
+                            dbnode.message = None
+                            dbnode.xray_version = None
+                            dbnode.last_status_change = datetime.utcnow()
+                            limit_cleared = True
+                            status_change_payload = (NodeResponse.model_validate(dbnode), previous_status)
+
+                    db.commit()
+            elif node_id is None and (total_up or total_down):
+                master_record = crud._ensure_master_state(db, for_update=True)
+                master_record.uplink = (master_record.uplink or 0) + total_up
+                master_record.downlink = (master_record.downlink or 0) + total_down
+
+                limit = master_record.data_limit
+                current_usage = (master_record.uplink or 0) + (master_record.downlink or 0)
 
                 if limit is not None and current_usage >= limit:
-                    if dbnode.status != NodeStatus.limited:
-                        previous_status = dbnode.status
-                        dbnode.status = NodeStatus.limited
-                        dbnode.message = "Data limit reached"
-                        dbnode.xray_version = None
-                        dbnode.last_status_change = datetime.utcnow()
-                        limited_triggered = True
-                        status_change_payload = (NodeResponse.model_validate(dbnode), previous_status)
+                    if master_record.status != NodeStatus.limited:
+                        master_record.status = NodeStatus.limited
+                        master_record.message = "Data limit reached"
+                        master_record.updated_at = datetime.utcnow()
                 else:
-                    if dbnode.status == NodeStatus.limited:
-                        previous_status = dbnode.status
-                        dbnode.status = NodeStatus.connecting
-                        dbnode.message = None
-                        dbnode.xray_version = None
-                        dbnode.last_status_change = datetime.utcnow()
-                        limit_cleared = True
-                        status_change_payload = (NodeResponse.model_validate(dbnode), previous_status)
+                    if master_record.status == NodeStatus.limited:
+                        master_record.status = NodeStatus.connected
+                        master_record.message = None
+                        master_record.updated_at = datetime.utcnow()
 
                 db.commit()
-            else:
-                db.commit()
-        elif master_record and (total_up or total_down):
-            master_record.uplink = (master_record.uplink or 0) + total_up
-            master_record.downlink = (master_record.downlink or 0) + total_down
-
-            limit = master_record.data_limit
-            current_usage = (master_record.uplink or 0) + (master_record.downlink or 0)
-
-            if limit is not None and current_usage >= limit:
-                if master_record.status != NodeStatus.limited:
-                    master_record.status = NodeStatus.limited
-                    master_record.message = "Data limit reached"
-                    master_record.updated_at = datetime.utcnow()
-            else:
-                if master_record.status == NodeStatus.limited:
-                    master_record.status = NodeStatus.connected
-                    master_record.message = None
-                    master_record.updated_at = datetime.utcnow()
-
-            db.commit()
         if status_change_payload:
             node_resp, prev_status = status_change_payload
             report.node_status_change(node_resp, previous_status=prev_status)
@@ -376,7 +379,13 @@ def record_user_usages():
         user_usage_backup = []
         for usage in users_usage:
             user_id = int(usage['uid'])
-            value = int(usage['value'])
+            # Ensure value is a valid integer
+            raw_value = usage.get('value', 0)
+            try:
+                value = int(float(raw_value))
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid usage value for user {user_id}: {raw_value}")
+                continue
             cache_user_usage_update(user_id, value, online_at)
             user_usage_backup.append({
                 'user_id': user_id,
