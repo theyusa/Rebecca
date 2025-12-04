@@ -10,8 +10,10 @@ from typing import Dict, List, Optional, Any, Tuple
 from collections import defaultdict
 
 from app.redis.client import get_redis
-from app.db.models import User, NodeUserUsage, NodeUsage
+from app.db.models import User, NodeUserUsage, NodeUsage, Proxy
 from app.models.user import UserStatus, UserDataLimitResetStrategy
+from sqlalchemy import func
+from sqlalchemy.orm import selectinload, joinedload
 
 logger = logging.getLogger(__name__)
 
@@ -224,14 +226,29 @@ def get_cached_user(username: Optional[str] = None, user_id: Optional[int] = Non
         if user:
             return user
     
-    # Fallback to DB if not found in cache
+    # Fallback to DB if not found in cache (avoid recursive cache calls)
     if db:
-        from app.db.crud import get_user
-        db_user = get_user(db, username=username, user_id=user_id)
+        query = db.query(User)
+        if user_id is not None:
+            query = query.filter(User.id == user_id)
+        elif username:
+            query = query.filter(func.lower(User.username) == username.lower())
+        else:
+            return None
+
+        # Lightweight eager-load to make returned object safe for use
+        query = query.options(
+            selectinload(User.proxies).selectinload(Proxy.excluded_inbounds),
+            joinedload(User.next_plan),
+            joinedload(User.admin),
+            joinedload(User.service),
+        )
+
+        db_user = query.first()
         if db_user:
             cache_user(db_user)
         return db_user
-    
+
     return None
 
 

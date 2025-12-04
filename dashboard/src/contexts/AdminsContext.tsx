@@ -13,12 +13,16 @@ type AdminsStore = {
   admins: Admin[];
   total: number;
   loading: boolean;
+  lastFetchedAt: number | null;
   filters: AdminFilters;
   isAdminDialogOpen: boolean;
   adminInDialog: Admin | null;
   isAdminDetailsOpen: boolean;
   adminInDetails: Admin | null;
-  fetchAdmins: (overrides?: Partial<AdminFilters>) => Promise<void>;
+  fetchAdmins: (
+    overrides?: Partial<AdminFilters>,
+    options?: { force?: boolean }
+  ) => Promise<void>;
   setFilters: (filters: Partial<AdminFilters>) => void;
   onFilterChange: (filters: Partial<AdminFilters>) => void;
   createAdmin: (payload: AdminCreatePayload) => Promise<void>;
@@ -44,13 +48,26 @@ export const useAdminsStore = create<AdminsStore>((set, get) => ({
   admins: [],
   total: 0,
   loading: false,
+  lastFetchedAt: null,
   filters: defaultFilters,
   isAdminDialogOpen: false,
   adminInDialog: null,
   isAdminDetailsOpen: false,
   adminInDetails: null,
-  async fetchAdmins(overrides) {
-    const { filters: stateFilters } = get();
+  async fetchAdmins(overrides, options) {
+    const { filters: stateFilters, lastFetchedAt, loading } = get();
+    const now = Date.now();
+    const force = options?.force === true;
+
+    // Throttle identical fetches to at most once per minute unless forced or filters changed
+    const hasOverrides = Boolean(overrides && Object.keys(overrides).length);
+    if (!force && !hasOverrides && lastFetchedAt && now - lastFetchedAt < 60_000) {
+      return;
+    }
+    if (loading) {
+      return;
+    }
+
     const filters = {
       ...stateFilters,
       ...overrides,
@@ -91,11 +108,12 @@ export const useAdminsStore = create<AdminsStore>((set, get) => ({
           admins,
           total,
           adminInDetails: currentDetails,
+          lastFetchedAt: now,
         };
       });
     } catch (error) {
       console.error("Failed to fetch admins:", error);
-      set({ admins: [], total: 0, adminInDetails: null });
+      set({ admins: [], total: 0, adminInDetails: null, lastFetchedAt: now });
     } finally {
       set({ loading: false });
     }
@@ -115,43 +133,43 @@ export const useAdminsStore = create<AdminsStore>((set, get) => ({
         ...partial,
       },
     }));
-    get().fetchAdmins();
+    get().fetchAdmins(partial, { force: true });
   },
   async createAdmin(payload) {
     await fetch("/admin", { method: "POST", body: payload });
-    await get().fetchAdmins();
+    await get().fetchAdmins(undefined, { force: true });
   },
   async updateAdmin(username, payload) {
     await fetch(`/admin/${encodeURIComponent(username)}`, {
       method: "PUT",
       body: payload,
     });
-    await get().fetchAdmins();
+    await get().fetchAdmins(undefined, { force: true });
   },
   async deleteAdmin(username) {
     await fetch(`/admin/${encodeURIComponent(username)}`, {
       method: "DELETE",
     });
-    await get().fetchAdmins();
+    await get().fetchAdmins(undefined, { force: true });
   },
   async resetUsage(username) {
     await fetch(`/admin/usage/reset/${encodeURIComponent(username)}`, {
       method: "POST",
     });
-    await get().fetchAdmins();
+    await get().fetchAdmins(undefined, { force: true });
   },
   async disableAdmin(username, reason) {
     await fetch(`/admin/${encodeURIComponent(username)}/disable`, {
       method: "POST",
       body: { reason },
     });
-    await get().fetchAdmins();
+    await get().fetchAdmins(undefined, { force: true });
   },
   async enableAdmin(username) {
     await fetch(`/admin/${encodeURIComponent(username)}/enable`, {
       method: "POST",
     });
-    await get().fetchAdmins();
+    await get().fetchAdmins(undefined, { force: true });
   },
   openAdminDialog(admin) {
     set({ isAdminDialogOpen: true, adminInDialog: admin || null });
