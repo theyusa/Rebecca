@@ -1162,7 +1162,11 @@ export const UserDialog: FC<UserDialogProps> = () => {
 
       }
 
-
+      // If service_id is 0 (no service), include proxies and inbounds
+      if (effectiveServiceId === null || effectiveServiceId === 0) {
+        serviceBody.proxies = proxies;
+        serviceBody.inbounds = inbounds;
+      }
 
       createUserWithService(serviceBody)
 

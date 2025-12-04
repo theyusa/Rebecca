@@ -128,6 +128,16 @@ def review():
                 update_user_status(db, user, status)
                 start_user_expire(db, user)
 
+                # Update user in xray when status changes from on_hold to active
+                if status == UserStatus.active:
+                    try:
+                        xray.operations.add_user(user)
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to add user {user.id} ({user.username}) to XRay: {e}. "
+                            f"Status will still be updated to {status}."
+                        )
+
                 report.status_change(username=user.username, status=status,
                                      user=UserResponse.model_validate(user), user_admin=user.admin)
 

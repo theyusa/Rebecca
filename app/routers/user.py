@@ -164,6 +164,12 @@ def add_user(
 
     # No-service mode (Marzban-compatible) ----------------------------------
     try:
+        if not payload_dict.get("proxies"):
+            raise HTTPException(
+                status_code=400,
+                detail="Each user needs at least one proxy when creating without a service",
+            )
+        
         # Accept UserCreate directly for Marzban compatibility
         if isinstance(payload, UserCreate):
             new_user = payload
@@ -179,13 +185,10 @@ def add_user(
         _ensure_flow_permission(admin, bool(new_user.flow))
         _ensure_custom_key_permission(admin, bool(new_user.credential_key))
 
-        # Validate protocols like Marzban does
-        for proxy_type in new_user.proxies:
-            if not xray.config.inbounds_by_protocol.get(proxy_type):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Protocol {proxy_type} is disabled on your server",
-                )
+        # In no-service mode, don't validate if protocol is enabled
+        # Just let it use all available inbounds for the specified protocols
+        # The validate_inbounds method in UserCreate will automatically set all inbounds
+        # for each protocol if not specified
 
         ensure_user_credential_key(new_user)
         dbuser = crud.create_user(
@@ -278,8 +281,10 @@ def modify_user(
 
     if user.status in [UserStatus.active, UserStatus.on_hold]:
         bg.add_task(xray.operations.update_user, dbuser=dbuser)
-    else:
+    elif old_status in [UserStatus.active, UserStatus.on_hold] and user.status not in [UserStatus.active, UserStatus.on_hold]:
         bg.add_task(xray.operations.remove_user, dbuser=dbuser)
+    elif old_status not in [UserStatus.active, UserStatus.on_hold] and user.status in [UserStatus.active, UserStatus.on_hold]:
+        bg.add_task(xray.operations.add_user, dbuser=dbuser)
 
     bg.add_task(report.user_updated, user=user, user_admin=dbuser.admin, by=admin)
 
@@ -437,6 +442,7 @@ def get_users(
         )
         
         user_responses = []
+        link_templates = {}  # Link templates for frontend to generate links
         try:
             # Get preferred subscription type once
             from app.services.panel_settings import PanelSettingsService
@@ -444,17 +450,147 @@ def get_users(
         except Exception:
             preferred = None
 
+        template_user = None
+        for user in users:
+            if user.status == UserStatus.active:
+                template_user = user
+                break
+        
+        # Generate link templates from first active user (if exists)
+        if template_user:
+            try:
+                resp_template = UserResponse.model_validate(template_user)
+                from app.subscription.share import generate_v2ray_links
+                template_links = generate_v2ray_links(
+                    resp_template.proxies, resp_template.excluded_inbounds, extra_data=resp_template.model_dump(), reverse=False,
+                )
+                
+                import re
+                from urllib.parse import quote, unquote
+                
+                for link in template_links[:5]:  # Take first 5 links as templates (different inbounds)
+                    protocol_match = re.match(r'^(\w+)://', link)
+                    if protocol_match:
+                        protocol = protocol_match.group(1)
+                        
+                        if protocol in ['vless', 'vmess']:
+                            uuid_pattern = r'([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})'
+                            template = re.sub(
+                                uuid_pattern,
+                                '{UUID}',
+                                link,
+                                flags=re.IGNORECASE
+                            )
+                        elif protocol == 'trojan':
+                            template = re.sub(
+                                r'^trojan://([^@]+)@',
+                                'trojan://{PASSWORD}@',
+                                link
+                            )
+                        elif protocol == 'ss':
+                            template = re.sub(
+                                r'^ss://([^@]+)@',
+                                'ss://{PASSWORD_B64}@',
+                                link
+                            )
+                        else:
+                            template = link
+                        
+                        if protocol not in link_templates:
+                            link_templates[protocol] = []
+                        # Avoid duplicates
+                        if template not in link_templates[protocol]:
+                            link_templates[protocol].append(template)
+            except Exception as e:
+                logger.debug(f"Failed to generate link templates: {e}")
+
         for user in users:
             resp = UserResponse.model_validate(user)
+            
+            # Generate subscription links
             links = build_subscription_links(resp, preferred=preferred)
             resp.subscription_url = links.get("primary") or resp.subscription_url
             resp.subscription_urls = {k: v for k, v in links.items() if k != "primary"}
+            
+            resp.link_data = []
+            if resp.status == UserStatus.active and resp.proxies and link_templates:
+                try:
+                    from app.subscription.share import generate_v2ray_links
+                    from app.utils.credentials import UUID_PROTOCOLS, PASSWORD_PROTOCOLS, runtime_proxy_settings
+                    import re
+                    
+                    user_links = generate_v2ray_links(
+                        resp.proxies, resp.excluded_inbounds, extra_data=resp.model_dump(), reverse=False,
+                    )
+                    
+                    for protocol, templates in link_templates.items():
+                        for template in templates:
+                            # Find matching link for this template
+                            for link in user_links:
+                                protocol_match = re.match(r'^(\w+)://', link)
+                                if not protocol_match or protocol_match.group(1) != protocol:
+                                    continue
+                                
+                                # Try to match template with link by replacing placeholders
+                                test_link = template
+                                matched = False
+                                
+                                if protocol in ['vless', 'vmess']:
+                                    uuid_match = re.search(
+                                        r'([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',
+                                        link,
+                                        re.IGNORECASE
+                                    )
+                                    if uuid_match:
+                                        test_link = template.replace('{UUID}', uuid_match.group(1))
+                                        # Check if template matches link (ignoring remark which may differ)
+                                        if test_link.split('#')[0] == link.split('#')[0]:
+                                            resp.link_data.append({
+                                                'uuid': uuid_match.group(1),
+                                                'protocol': protocol
+                                            })
+                                            matched = True
+                                            break
+                                elif protocol == 'trojan':
+                                    password_match = re.search(r'^trojan://([^@]+)@', link)
+                                    if password_match:
+                                        from urllib.parse import unquote, quote
+                                        password = unquote(password_match.group(1))
+                                        test_link = template.replace('{PASSWORD}', quote(password, safe=''))
+                                        if test_link.split('#')[0] == link.split('#')[0]:
+                                            resp.link_data.append({
+                                                'password': password,
+                                                'protocol': protocol
+                                            })
+                                            matched = True
+                                            break
+                                elif protocol == 'ss':
+                                    password_match = re.search(r'^ss://([^@]+)@', link)
+                                    if password_match:
+                                        test_link = template.replace('{PASSWORD_B64}', password_match.group(1))
+                                        if test_link.split('#')[0] == link.split('#')[0]:
+                                            resp.link_data.append({
+                                                'password_b64': password_match.group(1),
+                                                'protocol': protocol
+                                            })
+                                            matched = True
+                                            break
+                                
+                                if matched:
+                                    break
+                except Exception as e:
+                    logger.debug(f"Failed to generate link data for user {resp.username}: {e}")
+            
+            resp.links = []
+            resp.credentials = {}
+            
             user_responses.append(resp)
     finally:
         _skip_expensive_computations.reset(token)
 
     return {
         "users": user_responses,
+        "link_templates": link_templates,  # Templates for frontend to generate links
         "total": count,
         "active_total": active_total,
         "users_limit": users_limit,

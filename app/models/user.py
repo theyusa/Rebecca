@@ -3,7 +3,7 @@ import secrets
 from datetime import datetime
 import math
 from enum import Enum
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from contextvars import ContextVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -525,7 +525,7 @@ class UserResponse(User):
     used_traffic: int
     lifetime_used_traffic: int = 0
     created_at: datetime
-    links: List[str] = []
+    links: List[str] = Field(default_factory=list, exclude=True)  # Excluded from response to reduce payload
     subscription_url: str = ""
     subscription_urls: Dict[str, str] = Field(default_factory=dict)
     proxies: dict
@@ -533,6 +533,8 @@ class UserResponse(User):
     service_id: int | None = None
     service_name: str | None = None
     service_host_orders: Dict[int, int] = Field(default_factory=dict)
+    credentials: Dict[str, str] = Field(default_factory=dict, exclude=True)  # Excluded, use link_data instead
+    link_data: List[Dict[str, Any]] = Field(default_factory=list)  # UUID/password for each inbound template
 
     admin: Optional[Admin] = None
     model_config = ConfigDict(from_attributes=True)
@@ -546,6 +548,44 @@ class UserResponse(User):
             self.links = generate_v2ray_links(
                 self.proxies, self.inbounds, extra_data=self.model_dump(), reverse=False,
             )
+        return self
+    
+    @model_validator(mode="after")
+    def extract_credentials(self):
+        """Extract credentials (UUID/password) from proxies for lightweight response."""
+        if not self.credentials and self.proxies:
+            from app.utils.credentials import UUID_PROTOCOLS, PASSWORD_PROTOCOLS
+            
+            for proxy_type_key, settings in self.proxies.items():
+                try:
+                    # Handle both ProxyTypes enum and string
+                    if isinstance(proxy_type_key, ProxyTypes):
+                        proxy_type = proxy_type_key
+                        proxy_type_str = proxy_type.value
+                    else:
+                        proxy_type_str = str(proxy_type_key)
+                        proxy_type = ProxyTypes(proxy_type_str)
+                    
+                    # Convert ProxySettings to dict
+                    if hasattr(settings, 'dict'):
+                        settings_dict = settings.dict(no_obj=True)
+                    elif hasattr(settings, 'model_dump'):
+                        settings_dict = settings.model_dump()
+                    elif isinstance(settings, dict):
+                        settings_dict = settings
+                    else:
+                        continue
+                    
+                    if proxy_type in UUID_PROTOCOLS:
+                        uuid_value = settings_dict.get("id")
+                        if uuid_value:
+                            self.credentials[proxy_type_str] = str(uuid_value)
+                    elif proxy_type in PASSWORD_PROTOCOLS:
+                        password = settings_dict.get("password")
+                        if password:
+                            self.credentials[proxy_type_str] = str(password)
+                except Exception:
+                    continue
         return self
 
     @model_validator(mode="after")
@@ -674,6 +714,7 @@ class SubscriptionUserResponse(UserResponse):
 
 class UsersResponse(BaseModel):
     users: List[UserResponse]
+    link_templates: Dict[str, List[str]] = Field(default_factory=dict)  # Link templates by protocol (vless, vmess, trojan, ss)
     total: int
     active_total: Optional[int] = None
     users_limit: Optional[int] = None

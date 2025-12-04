@@ -801,10 +801,56 @@ type ActionButtonsProps = {
   user: User;
 };
 
-const ActionButtons: FC<ActionButtonsProps> = ({ user }) => {
-  const { setQRCode, setSubLink } = useDashboard();
+// Helper function to generate links from templates and link_data
+const generateUserLinks = (
+  user: User,
+  linkTemplates?: Record<string, string[]>
+): string[] => {
+  // If user has link_data and link_templates, generate links from them
+  if (user.link_data && linkTemplates && user.status === "active") {
+    const links: string[] = [];
+    let dataIndex = 0;
+    
+    // Iterate through templates in order and match with link_data
+    for (const [protocol, templates] of Object.entries(linkTemplates)) {
+      for (const template of templates) {
+        // Find matching link_data for this template
+        if (dataIndex < user.link_data.length) {
+          const linkData = user.link_data[dataIndex];
+          
+          // Only process if protocol matches
+          if (linkData.protocol === protocol) {
+            let link = template;
+            
+            // Replace placeholders
+            if (linkData.uuid) {
+              link = link.replace(/{UUID}/g, linkData.uuid);
+            } else if (linkData.password) {
+              link = link.replace(/{PASSWORD}/g, encodeURIComponent(linkData.password));
+            } else if (linkData.password_b64) {
+              link = link.replace(/{PASSWORD_B64}/g, linkData.password_b64);
+            }
+            
+            links.push(link);
+            dataIndex++;
+          }
+        }
+      }
+    }
+    
+    return links.length > 0 ? links : user.links || [];
+  }
+  
+  // Fallback to user.links if available
+  return user.links || [];
+};
 
-  const proxyLinks = user.links.join("\r\n");
+const ActionButtons: FC<ActionButtonsProps> = ({ user }) => {
+  const { setQRCode, setSubLink, linkTemplates } = useDashboard();
+
+  // Generate links from templates or use existing links
+  const userLinks = generateUserLinks(user, linkTemplates);
+  const proxyLinks = userLinks.join("\r\n");
   const formatLink = (link?: string | null) => {
     if (!link) return "";
     return link.startsWith("/")
@@ -918,7 +964,8 @@ const ActionButtons: FC<ActionButtonsProps> = ({ user }) => {
             md: "md",
           }}
           onClick={() => {
-            setQRCode(user.links);
+            const userLinks = generateUserLinks(user, linkTemplates);
+            setQRCode(userLinks);
             setSubLink(subscriptionLink);
           }}
         >

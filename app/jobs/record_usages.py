@@ -266,18 +266,30 @@ def record_user_usages():
 
     # record users usage
     admin_limit_events = []
+    
+    from app.redis.user_cache import cache_user_usage_update
+    from app.redis.client import get_redis
+    
+    redis_client = get_redis()
+    if redis_client:
+        online_at = datetime.utcnow()
+        for usage in users_usage:
+            user_id = int(usage['uid'])
+            value = int(usage['value'])
+            cache_user_usage_update(user_id, value, online_at)
+        
+    else:
+        with GetDB() as db:
+            stmt = update(User). \
+                where(User.id == bindparam('uid')). \
+                values(
+                    used_traffic=User.used_traffic + bindparam('value'),
+                    online_at=datetime.utcnow()
+            )
 
-    with GetDB() as db:
-        stmt = update(User). \
-            where(User.id == bindparam('uid')). \
-            values(
-                used_traffic=User.used_traffic + bindparam('value'),
-                online_at=datetime.utcnow()
-        )
-
-        safe_execute(db, stmt, users_usage)
-
-        admin_data = [{"admin_id": admin_id, "value": value} for admin_id, value in admin_usage.items()]
+            safe_execute(db, stmt, users_usage)
+            
+            admin_data = [{"admin_id": admin_id, "value": value} for admin_id, value in admin_usage.items()]
         if admin_data:
             increments = {entry["admin_id"]: entry["value"] for entry in admin_data}
             admin_rows = (

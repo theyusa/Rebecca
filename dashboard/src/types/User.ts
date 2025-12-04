@@ -43,6 +43,13 @@ export type NextPlan = {
   fire_on_either: boolean;
 };
 
+export type UserLinkData = {
+  uuid?: string;
+  password?: string;
+  password_b64?: string;
+  protocol: string;
+};
+
 export type User = {
   credential_key?: string | null;
   key_subscription_url?: string | null;
@@ -57,7 +64,8 @@ export type User = {
   username: string;
   used_traffic: number;
   status: Status;
-  links: string[];
+  links: string[]; // Deprecated, use link_data with link_templates instead
+  link_data?: UserLinkData[]; // UUID/password for each inbound
   subscription_url: string;
   inbounds: UserInbounds;
   note: string;
@@ -125,6 +133,7 @@ export type UseGetUserReturn = {
 
 export type UsersListResponse = {
   users: User[];
+  link_templates?: Record<string, string[]>; // Link templates by protocol
   total: number;
   active_total?: number | null;
   users_limit?: number | null;

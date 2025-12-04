@@ -81,6 +81,7 @@ type DashboardStateType = {
   deletingUser: User | null;
   version: string | null;
   users: UsersListResponse;
+  linkTemplates?: Record<string, string[]>; // Link templates for generating user links
   inbounds: Inbounds;
   loading: boolean;
   isUserLimitReached: boolean;
@@ -157,6 +158,7 @@ const fetchUsers = (query: FilterType, options: { force?: boolean } = {}): Promi
           : false;
       useDashboard.setState({
         users: usersResponse,
+        linkTemplates: usersResponse.link_templates, // Store link_templates separately for easy access
         isUserLimitReached,
         lastUsersFetchAt: Date.now(),
         usersCacheKey: cacheKey,

@@ -4,6 +4,7 @@ Functions for managing proxy hosts, users, user templates, nodes, and administra
 
 import logging
 import secrets
+import json
 from hashlib import sha256
 from copy import deepcopy
 from collections import defaultdict
@@ -152,14 +153,50 @@ def _next_plan_table_exists(db: Session) -> bool:
         return False
 
 def get_user(db: Session, username: Optional[str] = None, user_id: Optional[int] = None) -> Optional[User]:
-    """Retrieves a user by username or user ID."""
+    """Retrieves a user by username or user ID. Uses Redis cache if available."""
+    # Try Redis cache first
+    try:
+        from app.redis.user_cache import get_cached_user
+        cached_user = get_cached_user(username=username, user_id=user_id, db=db)
+        if cached_user:
+            # Refresh from DB to get latest relationships
+            query = get_user_queryset(db)
+            if user_id is not None:
+                db_user = query.filter(User.id == user_id).first()
+            elif username:
+                normalized = username.lower()
+                db_user = query.filter(func.lower(User.username) == normalized).first()
+            else:
+                db_user = None
+            
+            if db_user:
+                # Update cache with fresh data
+                from app.redis.user_cache import cache_user
+                cache_user(db_user)
+                return db_user
+            return cached_user
+    except Exception as e:
+        _logger.debug(f"Failed to get user from Redis cache: {e}")
+    
+    # Fallback to DB
     query = get_user_queryset(db)
     if user_id is not None:
-        return query.filter(User.id == user_id).first()
+        user = query.filter(User.id == user_id).first()
     elif username:
         normalized = username.lower()
-        return query.filter(func.lower(User.username) == normalized).first()
-    return None
+        user = query.filter(func.lower(User.username) == normalized).first()
+    else:
+        user = None
+    
+    # Cache for next time
+    if user:
+        try:
+            from app.redis.user_cache import cache_user
+            cache_user(user)
+        except Exception as e:
+            _logger.debug(f"Failed to cache user in Redis: {e}")
+    
+    return user
 
 def get_user_by_id(db: Session, user_id: int) -> Optional[User]:
     """Wrapper for backward compatibility."""
@@ -278,6 +315,134 @@ def _apply_advanced_user_filters(
 
     return query
 
+def _filter_users_in_memory(
+    users: List[User],
+    usernames: Optional[List[str]] = None,
+    search: Optional[str] = None,
+    status: Optional[Union[UserStatus, list]] = None,
+    admin: Optional[Admin] = None,
+    admins: Optional[List[str]] = None,
+    advanced_filters: Optional[List[str]] = None,
+    service_id: Optional[int] = None,
+    reset_strategy: Optional[Union[UserDataLimitResetStrategy, list]] = None,
+    now: Optional[datetime] = None,
+) -> List[User]:
+    """Filter users in memory (for Redis cache)."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    
+    filtered = users
+    
+    # Filter by usernames
+    if usernames:
+        username_set = {u.lower() for u in usernames}
+        filtered = [u for u in filtered if u.username and u.username.lower() in username_set]
+    
+    # Filter by status
+    if status:
+        if isinstance(status, list):
+            status_set = set(status)
+            filtered = [u for u in filtered if u.status in status_set]
+        else:
+            filtered = [u for u in filtered if u.status == status]
+    
+    # Filter by service_id
+    if service_id is not None:
+        filtered = [u for u in filtered if u.service_id == service_id]
+    
+    # Filter by reset_strategy
+    if reset_strategy:
+        if isinstance(reset_strategy, list):
+            strategy_set = {s.value if hasattr(s, 'value') else s for s in reset_strategy}
+            filtered = [u for u in filtered if u.data_limit_reset_strategy and u.data_limit_reset_strategy.value in strategy_set]
+        else:
+            strategy_value = reset_strategy.value if hasattr(reset_strategy, 'value') else reset_strategy
+            filtered = [u for u in filtered if u.data_limit_reset_strategy and u.data_limit_reset_strategy.value == strategy_value]
+    
+    # Filter by admin
+    if admin:
+        filtered = [u for u in filtered if u.admin_id == admin.id]
+    
+    # Filter by admins
+    if admins:
+        admin_set = {a.lower() for a in admins}
+        filtered = [u for u in filtered if u.admin and u.admin.username and u.admin.username.lower() in admin_set]
+    
+    # Apply advanced filters
+    if advanced_filters:
+        normalized_filters = {f.lower() for f in advanced_filters if f}
+        
+        if "online" in normalized_filters:
+            online_threshold = now - ONLINE_ACTIVE_WINDOW
+            filtered = [u for u in filtered if u.online_at and u.online_at >= online_threshold]
+        
+        if "offline" in normalized_filters:
+            offline_threshold = now - OFFLINE_STALE_WINDOW
+            filtered = [u for u in filtered if not u.online_at or u.online_at < offline_threshold]
+        
+        if "finished" in normalized_filters:
+            filtered = [u for u in filtered if u.status in (UserStatus.limited, UserStatus.expired)]
+        
+        if "limit" in normalized_filters:
+            filtered = [u for u in filtered if u.data_limit and u.data_limit > 0]
+        
+        if "unlimited" in normalized_filters:
+            filtered = [u for u in filtered if not u.data_limit or u.data_limit == 0]
+        
+        if "sub_not_updated" in normalized_filters:
+            update_threshold = now - UPDATE_STALE_WINDOW
+            filtered = [u for u in filtered if not u.sub_updated_at or u.sub_updated_at < update_threshold]
+        
+        if "sub_never_updated" in normalized_filters:
+            filtered = [u for u in filtered if not u.sub_updated_at]
+        
+        status_candidates = [STATUS_FILTER_MAP[key] for key in normalized_filters if key in STATUS_FILTER_MAP]
+        if status_candidates:
+            status_set = set(status_candidates)
+            filtered = [u for u in filtered if u.status in status_set]
+    
+    # Search filter
+    if search:
+        search_lower = search.lower()
+        key_candidates, uuid_candidates = _derive_search_tokens(search)
+        key_candidates_set = set(key_candidates) if key_candidates else set()
+        uuid_candidates_set = set(uuid_candidates) if uuid_candidates else set()
+        
+        def matches_search(u: User) -> bool:
+            if u.username and search_lower in u.username.lower():
+                return True
+            if u.note and search_lower in u.note.lower():
+                return True
+            if u.credential_key:
+                if search_lower in u.credential_key.lower():
+                    return True
+                if key_candidates_set:
+                    normalized_key = u.credential_key.replace("-", "").lower()
+                    if normalized_key in key_candidates_set:
+                        return True
+            if uuid_candidates_set and hasattr(u, 'proxies') and u.proxies:
+                for proxy in u.proxies:
+                    # Handle both dict and string settings
+                    if isinstance(proxy.settings, dict):
+                        proxy_id = proxy.settings.get("id")
+                    elif isinstance(proxy.settings, str):
+                        try:
+                            proxy_settings = json.loads(proxy.settings)
+                            proxy_id = proxy_settings.get("id") if isinstance(proxy_settings, dict) else None
+                        except:
+                            proxy_id = None
+                    else:
+                        proxy_id = None
+                    
+                    if proxy_id and proxy_id in uuid_candidates_set:
+                        return True
+            return False
+        
+        filtered = [u for u in filtered if matches_search(u)]
+    
+    return filtered
+
+
 def get_users(db: Session, offset: Optional[int] = None, limit: Optional[int] = None,
               usernames: Optional[List[str]] = None, search: Optional[str] = None,
               status: Optional[Union[UserStatus, list]] = None, sort: Optional[List[UsersSortingOptions]] = None,
@@ -285,7 +450,79 @@ def get_users(db: Session, offset: Optional[int] = None, limit: Optional[int] = 
               advanced_filters: Optional[List[str]] = None, service_id: Optional[int] = None,
               reset_strategy: Optional[Union[UserDataLimitResetStrategy, list]] = None,
               return_with_count: bool = False) -> Union[List[User], Tuple[List[User], int]]:
-    """Retrieves users based on various filters and options."""
+    """Retrieves users based on various filters and options. Uses Redis cache if available."""
+    # Try to get from Redis cache first
+    try:
+        from app.redis.user_cache import get_all_users_from_cache
+        from app.redis.client import get_redis
+        from config import REDIS_ENABLED
+        
+        if REDIS_ENABLED and get_redis():
+            # Get all users from Redis
+            all_users = get_all_users_from_cache(db)
+            
+            if all_users:
+                # Filter in memory
+                filtered_users = _filter_users_in_memory(
+                    all_users,
+                    usernames=usernames,
+                    search=search,
+                    status=status,
+                    admin=admin,
+                    admins=admins,
+                    advanced_filters=advanced_filters,
+                    service_id=service_id,
+                    reset_strategy=reset_strategy,
+                )
+                
+                # Sort
+                if sort:
+                    for sort_opt in reversed(sort):  # Apply sorts in reverse order
+                        sort_str = str(sort_opt.value).lower()
+                        reverse = 'desc' in sort_str
+                        
+                        if 'username' in sort_str:
+                            filtered_users.sort(key=lambda u: (u.username or "").lower(), reverse=reverse)
+                        elif 'created_at' in sort_str:
+                            filtered_users.sort(key=lambda u: u.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=reverse)
+                        elif 'used_traffic' in sort_str:
+                            filtered_users.sort(key=lambda u: getattr(u, 'used_traffic', 0) or 0, reverse=reverse)
+                        elif 'data_limit' in sort_str:
+                            filtered_users.sort(key=lambda u: u.data_limit or 0, reverse=reverse)
+                        elif 'expire' in sort_str:
+                            filtered_users.sort(key=lambda u: u.expire or datetime.max.replace(tzinfo=timezone.utc) if u.expire else datetime.min.replace(tzinfo=timezone.utc), reverse=reverse)
+                
+                # Get count before pagination
+                count = len(filtered_users) if return_with_count else None
+                
+                # Pagination
+                if offset:
+                    filtered_users = filtered_users[offset:]
+                if limit:
+                    filtered_users = filtered_users[:limit]
+                
+                if filtered_users:
+                    user_ids = [u.id for u in filtered_users]
+                    query = db.query(User).filter(User.id.in_(user_ids))
+                    query = query.options(
+                        joinedload(User.admin),  # many-to-one: one admin per user
+                        selectinload(User.proxies),  # one-to-many: multiple proxies per user
+                    )
+                    if _next_plan_table_exists(db):
+                        query = query.options(joinedload(User.next_plan))
+                    
+                    db_users = query.all()
+                    db_users_dict = {u.id: u for u in db_users}
+                    final_users = [db_users_dict.get(u.id, u) for u in filtered_users if u.id in db_users_dict]
+                else:
+                    final_users = []
+                
+                if return_with_count:
+                    return final_users, count
+                return final_users
+    except Exception as e:
+        _logger.debug(f"Failed to get users from Redis cache: {e}")
+    
     query = get_user_queryset(db, eager_load=False)
     query = _apply_advanced_user_filters(
         query,
@@ -359,6 +596,14 @@ def get_users(db: Session, offset: Optional[int] = None, limit: Optional[int] = 
         query = query.limit(limit)
 
     users = query.all()
+    
+    # Cache users in Redis for future queries
+    try:
+        from app.redis.user_cache import cache_user
+        for user in users:
+            cache_user(user)
+    except Exception as e:
+        _logger.debug(f"Failed to cache users in Redis: {e}")
 
     if return_with_count:
         return users, count
@@ -511,6 +756,14 @@ def create_user(db: Session, user: UserCreate, admin: Admin = None, service: Opt
 
     db.commit()
     db.refresh(dbuser)
+    
+    # Cache user in Redis
+    try:
+        from app.redis.user_cache import cache_user
+        cache_user(dbuser)
+    except Exception as e:
+        _logger.warning(f"Failed to cache user in Redis: {e}")
+    
     return dbuser
 
 def remove_user(db: Session, dbuser: User) -> User:
@@ -522,6 +775,12 @@ def remove_user(db: Session, dbuser: User) -> User:
     physically_deleted = False
     try:
         db.commit()
+        # Invalidate user from Redis cache
+        try:
+            from app.redis.user_cache import invalidate_user_cache
+            invalidate_user_cache(username=dbuser.username, user_id=dbuser.id)
+        except Exception as e:
+            _logger.warning(f"Failed to invalidate user from Redis cache: {e}")
     except DataError as exc:
         db.rollback()
         if not _ensure_user_deleted_status(db):
@@ -674,6 +933,15 @@ def update_user(db: Session, dbuser: User, modify: UserModify, *, service: Optio
 
     db.commit()
     db.refresh(dbuser)
+    
+    # Update user in Redis cache
+    try:
+        from app.redis.user_cache import cache_user, invalidate_user_cache
+        invalidate_user_cache(username=dbuser.username, user_id=dbuser.id)
+        cache_user(dbuser)
+    except Exception as e:
+        _logger.warning(f"Failed to update user in Redis cache: {e}")
+    
     return dbuser
 
 def reset_user_by_next(db: Session, dbuser: User) -> User:

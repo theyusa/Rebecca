@@ -15,7 +15,7 @@ from app import runtime
 from app.db import GetDB, crud
 from app.utils.system import register_scheduler_jobs
 
-__version__ = "0.0.24"
+__version__ = "0.0.25"
 
 IS_RUNNING_ALEMBIC = any("alembic" in (arg or "").lower() for arg in sys.argv)
 if IS_RUNNING_ALEMBIC:
@@ -111,19 +111,34 @@ if not SKIP_RUNTIME_INIT:
         # Initialize Redis connection
         init_redis()
         
-        # Warm up subscription cache if Redis is available
+        # Start scheduler first (so server can start quickly)
+        scheduler.start()
+        
+        # Warm up caches in background (async) if Redis is available
         redis_client = get_redis()
         if redis_client:
-            logger.info("Redis is available, warming up subscription cache...")
-            try:
-                total, cached = warmup_subscription_cache()
-                logger.info(f"Subscription cache warmup completed: {cached}/{total} users cached")
-            except Exception as e:
-                logger.warning(f"Failed to warmup subscription cache: {e}", exc_info=True)
+            logger.info("Redis is available, warming up caches in background...")
+            
+            def warmup_caches_async():
+                try:
+                    total, cached = warmup_subscription_cache()
+                    logger.info(f"Subscription cache warmup completed: {cached}/{total} users cached")
+                except Exception as e:
+                    logger.warning(f"Failed to warmup subscription cache: {e}", exc_info=True)
+                
+                try:
+                    from app.redis.user_cache import warmup_users_cache
+                    total, cached = warmup_users_cache()
+                    logger.info(f"Users cache warmup completed: {cached}/{total} users cached")
+                except Exception as e:
+                    logger.warning(f"Failed to warmup users cache: {e}", exc_info=True)
+            
+            # Run warmup in background thread
+            import threading
+            warmup_thread = threading.Thread(target=warmup_caches_async, daemon=True)
+            warmup_thread.start()
         else:
-            logger.info("Redis is not available, subscription validation will use database only")
-        
-        scheduler.start()
+            logger.info("Redis is not available, validation will use database only")
 
 
     @app.on_event("shutdown")

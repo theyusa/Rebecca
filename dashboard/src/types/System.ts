@@ -31,6 +31,22 @@ export interface AdminOverviewStats {
   top_admin_usage: number;
 }
 
+export interface RedisStats {
+  enabled: boolean;
+  connected: boolean;
+  memory_used: number;
+  memory_total: number;
+  memory_percent: number;
+  uptime_seconds: number;
+  version?: string | null;
+  keys_count: number;
+  keys_cached: number;
+  commands_processed: number;
+  hits: number;
+  misses: number;
+  hit_rate: number;
+}
+
 export interface SystemStats {
   version: string;
   cpu_cores: number;
@@ -68,4 +84,5 @@ export interface SystemStats {
   personal_usage: PersonalUsageStats;
   admin_overview: AdminOverviewStats;
   last_xray_error?: string | null;
+  redis_stats?: RedisStats | null;
 }

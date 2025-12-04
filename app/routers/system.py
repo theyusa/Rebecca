@@ -24,6 +24,7 @@ from app.models.proxy import ProxyHost, ProxyInbound, ProxyTypes
 from app.models.system import (
     AdminOverviewStats,
     PersonalUsageStats,
+    RedisStats,
     SystemStats,
     UsageStats,
 )
@@ -33,7 +34,7 @@ from app.utils.system import cpu_usage, realtime_bandwidth
 from app.utils.xray_config import apply_config_and_restart
 from app.utils.maintenance import maintenance_request
 from config import XRAY_EXECUTABLE_PATH, XRAY_EXCLUDE_INBOUND_TAGS, XRAY_FALLBACKS_INBOUND_TAG, REDIS_ENABLED
-from app.redis import get_redis
+from app.redis.client import get_redis
 
 router = APIRouter(tags=["System"], prefix="/api", responses={401: responses._401})
 logger = logging.getLogger(__name__)
@@ -200,6 +201,108 @@ def get_system_stats(
         admin_overview.top_admin_username = top_admin.username
         admin_overview.top_admin_usage = int(top_admin.users_usage or 0)
 
+    # Get Redis stats
+    redis_stats = None
+    if REDIS_ENABLED:
+        redis_client = get_redis()
+        redis_connected = False
+        redis_memory_used = 0
+        redis_memory_total = 0
+        redis_memory_percent = 0.0
+        redis_uptime_seconds = 0
+        redis_version = None
+        redis_keys_count = 0
+        redis_keys_cached = 0
+        redis_commands_processed = 0
+        redis_hits = 0
+        redis_misses = 0
+        redis_hit_rate = 0.0
+        
+        if redis_client:
+            try:
+                redis_client.ping()
+                redis_connected = True
+                
+                # Get Redis INFO
+                info = redis_client.info()
+                stats_info = redis_client.info("stats")
+                
+                # Memory stats
+                redis_memory_used = int(info.get("used_memory", 0))
+                redis_memory_total = int(info.get("maxmemory", 0))
+                if redis_memory_total == 0:
+                    redis_memory_total = redis_memory_used if redis_memory_used > 0 else 1
+                    redis_memory_percent = 0.0  # No limit set, so percentage is not meaningful
+                else:
+                    redis_memory_percent = (redis_memory_used / redis_memory_total) * 100.0
+                
+                # Uptime
+                redis_uptime_seconds = int(info.get("uptime_in_seconds", 0))
+                
+                # Version
+                redis_version = info.get("redis_version")
+                
+                try:
+                    redis_keys_count = redis_client.dbsize()
+                except Exception:
+                    db0_info = info.get("db0")
+                    if isinstance(db0_info, dict):
+                        redis_keys_count = int(db0_info.get("keys", 0))
+                    elif isinstance(db0_info, str):
+                        try:
+                            for part in db0_info.split(","):
+                                if part.startswith("keys="):
+                                    redis_keys_count = int(part.split("=")[1])
+                                    break
+                        except Exception:
+                            pass
+                    else:
+                        redis_keys_count = 0
+                
+                # Count cached subscription keys
+                try:
+                    from app.redis.subscription import REDIS_KEY_PREFIX_USERNAME
+                    pattern = f"{REDIS_KEY_PREFIX_USERNAME}*"
+                    redis_keys_cached = len(redis_client.keys(pattern))
+                except Exception:
+                    redis_keys_cached = 0
+                
+                redis_commands_processed = int(stats_info.get("total_commands_processed", 0))
+                
+                # Cache hits/misses (from keyspace stats)
+                redis_hits = int(stats_info.get("keyspace_hits", 0))
+                redis_misses = int(stats_info.get("keyspace_misses", 0))
+                total_requests = redis_hits + redis_misses
+                if total_requests > 0:
+                    redis_hit_rate = (redis_hits / total_requests) * 100.0
+                else:
+                    redis_hit_rate = 0.0
+                    
+            except Exception as e:
+                logger.debug(f"Failed to get Redis stats: {e}")
+                redis_connected = False
+        
+        redis_stats = RedisStats(
+            enabled=True,
+            connected=redis_connected,
+            memory_used=redis_memory_used,
+            memory_total=redis_memory_total,
+            memory_percent=redis_memory_percent,
+            uptime_seconds=redis_uptime_seconds,
+            version=redis_version,
+            keys_count=redis_keys_count,
+            keys_cached=redis_keys_cached,
+            commands_processed=redis_commands_processed,
+            hits=redis_hits,
+            misses=redis_misses,
+            hit_rate=redis_hit_rate,
+        )
+    else:
+        redis_stats = RedisStats(
+            enabled=False,
+            connected=False,
+        )
+
     return SystemStats(
         version=__version__,
         cpu_cores=cpu.cores,
@@ -249,6 +352,7 @@ def get_system_stats(
         personal_usage=personal_usage,
         admin_overview=admin_overview,
         last_xray_error=last_xray_error,
+        redis_stats=redis_stats,
     )
 
 

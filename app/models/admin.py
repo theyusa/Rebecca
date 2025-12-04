@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import Any, Dict, Optional, Union
-from datetime import datetime
+from datetime import datetime, timezone
 from collections.abc import Mapping
 
 from fastapi import Depends, HTTPException, status
@@ -14,6 +14,18 @@ from config import SUDOERS
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/admin/token")  # Admin view url
+
+
+def _to_utc_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """
+    Normalize datetimes so comparisons never mix aware/naive objects.
+    We treat naive values as UTC (the DB stores naive UTC timestamps).
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 class AdminStatus(str, Enum):
@@ -519,7 +531,10 @@ class Admin(BaseModel):
         if dbadmin.password_reset_at:
             if not payload.get("created_at"):
                 return
-            if dbadmin.password_reset_at > payload.get("created_at"):
+            # Normalize both datetimes to UTC-aware for comparison
+            password_reset_at_utc = _to_utc_aware(dbadmin.password_reset_at)
+            created_at_utc = _to_utc_aware(payload.get("created_at"))
+            if password_reset_at_utc and created_at_utc and password_reset_at_utc > created_at_utc:
                 return
 
         return cls.model_validate(dbadmin)

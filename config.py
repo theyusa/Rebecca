@@ -86,6 +86,7 @@ REDIS_PORT = config("REDIS_PORT", cast=int, default=6379)
 REDIS_DB = config("REDIS_DB", cast=int, default=0)
 REDIS_PASSWORD = config("REDIS_PASSWORD", default=None)
 REDIS_AUTO_START = config("REDIS_AUTO_START", cast=bool, default=False)
+REDIS_SYNC_INTERVAL = config("REDIS_SYNC_INTERVAL", cast=int, default=180)  # 3 minutes default
 EXPIRED_STATUS_TEXT = config("EXPIRED_STATUS_TEXT", default="Expired")
 LIMITED_STATUS_TEXT = config("LIMITED_STATUS_TEXT", default="Limited")
 DISABLED_STATUS_TEXT = config("DISABLED_STATUS_TEXT", default="Disabled")
