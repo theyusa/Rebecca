@@ -45,11 +45,13 @@ export const updateTelegramSettings = async (
 export interface PanelSettingsResponse {
   use_nobetci: boolean;
   default_subscription_type: "username-key" | "key" | "token";
+  access_insights_enabled: boolean;
 }
 
 export interface PanelSettingsUpdatePayload {
   use_nobetci?: boolean;
   default_subscription_type?: "username-key" | "key" | "token";
+  access_insights_enabled?: boolean;
 }
 
 export const getPanelSettings = async (): Promise<PanelSettingsResponse> => {

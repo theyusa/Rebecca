@@ -35,6 +35,7 @@ export const NodeSchema = z.object({
   uplink: z.number().nullable().optional(),
   downlink: z.number().nullable().optional(),
   use_nobetci: z.boolean().optional(),
+  access_insights_enabled: z.boolean().optional(),
   nobetci_port: z.number().nullable().optional(),
   certificate: z.string().optional(),
   certificate_key: z.string().optional(),
@@ -59,6 +60,7 @@ export const getNodeDefaultValues = (): NodeType => ({
   uplink: 0,
   downlink: 0,
   use_nobetci: false,
+  access_insights_enabled: false,
   nobetci_port: null,
 });
 

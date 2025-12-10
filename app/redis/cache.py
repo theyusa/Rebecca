@@ -116,12 +116,14 @@ def _serialize_user(user: User) -> Dict[str, Any]:
         "ip_limit": user.ip_limit,
         "flow": user.flow,
         "credential_key": user.credential_key,
+        "sub_revoked_at": _serialize_value(getattr(user, "sub_revoked_at", None)),
         "created_at": _serialize_value(user.created_at),
         "edit_at": _serialize_value(user.edit_at),
         "last_status_change": _serialize_value(user.last_status_change),
         "online_at": _serialize_value(user.online_at),
         "sub_updated_at": _serialize_value(user.sub_updated_at),
         "used_traffic": user.used_traffic,
+        "lifetime_used_traffic": getattr(user, "lifetime_used_traffic", 0),
         "admin_id": user.admin_id,
         "admin_username": user.admin.username if getattr(user, "admin", None) else None,
         "service_id": user.service_id,
@@ -207,7 +209,16 @@ def _deserialize_user(user_dict: Dict[str, Any], db: Optional[Any] = None) -> Op
         user.ip_limit = user_dict.get("ip_limit", 0)
         user.flow = user_dict.get("flow")
         user.credential_key = user_dict.get("credential_key")
+        user.sub_revoked_at = (
+            datetime.fromisoformat(user_dict["sub_revoked_at"].replace("Z", "+00:00"))
+            if user_dict.get("sub_revoked_at")
+            else None
+        )
         user.used_traffic = user_dict.get("used_traffic", 0)
+        try:
+            user.lifetime_used_traffic = user_dict.get("lifetime_used_traffic", 0)
+        except Exception:
+            pass
         user.sub_updated_at = (
             datetime.fromisoformat(user_dict["sub_updated_at"].replace("Z", "+00:00"))
             if user_dict.get("sub_updated_at")
@@ -269,6 +280,29 @@ def cache_user(user: User) -> bool:
 
         redis_client.setex(_get_user_id_key(user.id), USER_CACHE_TTL, user_json)
         redis_client.setex(_get_user_key(user.username), USER_CACHE_TTL, user_json)
+
+        # Incrementally update aggregated list if it exists
+        aggregated = redis_client.get(REDIS_KEY_USER_LIST_ALL)
+        if aggregated:
+            try:
+                data = json.loads(aggregated)
+                if not isinstance(data, list):
+                    data = []
+            except Exception:
+                data = []
+
+            updated = False
+            for idx, item in enumerate(data):
+                if item.get("id") == user.id:
+                    data[idx] = user_dict
+                    updated = True
+                    break
+            if not updated:
+                data.append(user_dict)
+
+            ttl = redis_client.ttl(REDIS_KEY_USER_LIST_ALL)
+            ttl_value = ttl if ttl and ttl > 0 else USER_CACHE_TTL
+            redis_client.setex(REDIS_KEY_USER_LIST_ALL, ttl_value, json.dumps(data))
         return True
     except Exception as e:
         logger.warning(f"Failed to cache user in Redis: {e}")
@@ -345,12 +379,32 @@ def invalidate_user_cache(username: Optional[str] = None, user_id: Optional[int]
         if keys_to_delete:
             redis_client.delete(*keys_to_delete)
 
-        # Also invalidate list caches
+        # Update aggregated list by removing the user entry if present
+        aggregated = redis_client.get(REDIS_KEY_USER_LIST_ALL)
+        if aggregated:
+            try:
+                data = json.loads(aggregated)
+                if isinstance(data, list):
+                    filtered = []
+                    for item in data:
+                        item_id = item.get("id")
+                        item_username = item.get("username")
+                        if user_id is not None and item_id == user_id:
+                            continue
+                        if username is not None and item_username == username:
+                            continue
+                        filtered.append(item)
+                    data = filtered
+                    ttl = redis_client.ttl(REDIS_KEY_USER_LIST_ALL)
+                    ttl_value = ttl if ttl and ttl > 0 else USER_CACHE_TTL
+                    redis_client.setex(REDIS_KEY_USER_LIST_ALL, ttl_value, json.dumps(data))
+            except Exception:
+                pass
+
+        # Also invalidate list/count caches (legacy)
         pattern = f"{REDIS_KEY_PREFIX_USER_LIST}*"
         for key in redis_client.scan_iter(match=pattern):
             redis_client.delete(key)
-
-        # Invalidate count caches
         pattern = f"{REDIS_KEY_PREFIX_USER_COUNT}*"
         for key in redis_client.scan_iter(match=pattern):
             redis_client.delete(key)
@@ -368,27 +422,27 @@ def get_all_users_from_cache(db: Optional[Any] = None) -> List[User]:
         return []
 
     try:
-        # Fast path: fetch prebuilt list if present
-        cached_list = redis_client.get(REDIS_KEY_USER_LIST_ALL)
-        if cached_list:
+        # 1) Primary path: aggregated list
+        aggregated = redis_client.get(REDIS_KEY_USER_LIST_ALL)
+        if aggregated:
             try:
-                data = json.loads(cached_list)
-                users = []
-                for user_dict in data:
-                    user = _deserialize_user(user_dict, db)
-                    if user and user.status != UserStatus.deleted:
-                        users.append(user)
-                if users:
-                    logger.debug(f"Loaded {len(users)} users from Redis aggregated list")
-                    return users
+                data = json.loads(aggregated)
+                if isinstance(data, list):
+                    users: List[User] = []
+                    for user_dict in data:
+                        user = _deserialize_user(user_dict, db)
+                        if user and user.status != UserStatus.deleted:
+                            users.append(user)
+                    if users:
+                        return users
             except Exception as exc:
-                logger.debug(f"Failed to deserialize cached user list: {exc}")
+                logger.debug(f"Failed to decode aggregated user list: {exc}")
 
+        # 2) Rebuild once from per-user keys (or DB) when aggregated is missing/corrupt
         user_id_keys = []
         pattern = f"{REDIS_KEY_PREFIX_USER_BY_ID}*"
-        # Use SCAN with cursor for better performance and timeout prevention
         cursor = 0
-        max_iterations = 10000  # Safety limit
+        max_iterations = 10000
         iteration = 0
         while iteration < max_iterations:
             cursor, keys = redis_client.scan(cursor, match=pattern, count=1000)
@@ -397,92 +451,182 @@ def get_all_users_from_cache(db: Optional[Any] = None) -> List[User]:
                 break
             iteration += 1
 
-        if not user_id_keys:
-            if db:
-                logger.info("No users found in Redis cache, loading from database")
-                try:
-                    from app.db.crud import get_user_queryset
-
-                    # Load without eager loading first to avoid timeout
-                    query = get_user_queryset(db, eager_load=False)
-                    db_users = query.all()
-                    # Cache users in background (don't block)
-                    try:
-                        for db_user in db_users:
-                            cache_user(db_user)
-                    except Exception as e:
-                        logger.warning(f"Failed to cache some users: {e}")
-                    return db_users
-                except Exception as e:
-                    logger.error(f"Failed to load users from database: {e}")
-                    return []
-            return []
-
-        users = []
+        users: List[User] = []
         seen_user_ids = set()
-        batch_size = 1000
 
-        for i in range(0, len(user_id_keys), batch_size):
-            batch_keys = user_id_keys[i : i + batch_size]
-            pipe = redis_client.pipeline()
-            for key in batch_keys:
-                pipe.get(key)
-            results = pipe.execute()
+        if user_id_keys:
+            batch_size = 1000
+            for i in range(0, len(user_id_keys), batch_size):
+                batch_keys = user_id_keys[i : i + batch_size]
+                pipe = redis_client.pipeline()
+                for key in batch_keys:
+                    pipe.get(key)
+                results = pipe.execute()
 
-            for user_json in results:
-                if not user_json:
-                    continue
+                for user_json in results:
+                    if not user_json:
+                        continue
+                    try:
+                        user_dict = json.loads(user_json)
+                        user_id = user_dict.get("id")
+                        if user_id and user_id not in seen_user_ids:
+                            seen_user_ids.add(user_id)
+                            user = _deserialize_user(user_dict, db)
+                            if user and user.status != UserStatus.deleted:
+                                users.append(user)
+                    except Exception as e:
+                        logger.debug(f"Failed to deserialize user: {e}")
+                        continue
+
+        # Fallback to DB when no per-user cache exists
+        if not users and db:
+            try:
+                from app.db.crud import get_user_queryset
+
+                query = get_user_queryset(db, eager_load=False)
+                users = query.all()
                 try:
-                    user_dict = json.loads(user_json)
-                    user_id = user_dict.get("id")
-                    if user_id and user_id not in seen_user_ids:
-                        seen_user_ids.add(user_id)
-                        user = _deserialize_user(user_dict, db)
-                        if user and user.status != UserStatus.deleted:
-                            users.append(user)
-                except Exception as e:
-                    logger.debug(f"Failed to deserialize user: {e}")
-                    continue
+                    pipe = redis_client.pipeline()
+                    for u in users:
+                        serialized = json.dumps(_serialize_user(u))
+                        pipe.setex(_get_user_id_key(u.id), USER_CACHE_TTL, serialized)
+                        pipe.setex(_get_user_key(u.username), USER_CACHE_TTL, serialized)
+                    pipe.execute()
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.error(f"Failed to load users from database: {e}")
+                users = []
 
+        # Refresh aggregated list if we have anything
         if users:
             try:
+                ttl = redis_client.ttl(REDIS_KEY_USER_LIST_ALL)
+                ttl_value = ttl if ttl and ttl > 0 else USER_CACHE_TTL
                 redis_client.setex(
                     REDIS_KEY_USER_LIST_ALL,
-                    USER_CACHE_TTL,
+                    ttl_value,
                     json.dumps([_serialize_user(u) for u in users]),
                 )
             except Exception as exc:
                 logger.debug(f"Failed to cache aggregated user list: {exc}")
-
-            logger.debug(f"Loaded {len(users)} users from Redis cache")
             return users
 
-        if db:
-            logger.info("No users found in Redis cache, loading from database")
-            try:
-                from app.db.crud import get_user_queryset
-
-                # Load without eager loading first to avoid timeout
-                query = get_user_queryset(db, eager_load=False)
-                db_users = query.all()
-                # Cache users in background (don't block)
-                try:
-                    for db_user in db_users:
-                        cache_user(db_user)
-                except Exception as e:
-                    logger.warning(f"Failed to cache some users: {e}")
-                return db_users
-            except Exception as e:
-                logger.error(f"Failed to load users from database: {e}")
-                return []
-
-        return []
+        return users
     except Exception as e:
         logger.error(f"Failed to get all users from cache: {e}")
         if db:
             from app.db.crud import get_user_queryset
 
             return get_user_queryset(db, eager_load=True).all()
+        return []
+
+
+def get_all_users_raw_from_cache(db: Optional[Any] = None) -> List[Dict[str, Any]]:
+    """
+    Lightweight variant of get_all_users_from_cache.
+
+    - Returns a list of plain dicts (serialized user data) instead of User objects.
+    - Does NOT call _deserialize_user and does NOT create SQLAlchemy models.
+    - Uses the same Redis keys and aggregation strategy as get_all_users_from_cache.
+    - Filters out users with status == UserStatus.deleted.
+    """
+    redis_client = get_redis()
+    if not redis_client:
+        return []
+
+    try:
+        # 1) Primary path: aggregated list
+        aggregated = redis_client.get(REDIS_KEY_USER_LIST_ALL)
+        if aggregated:
+            try:
+                data = json.loads(aggregated)
+                if isinstance(data, list):
+                    return [u for u in data if u.get("status") != UserStatus.deleted.value]
+            except Exception as exc:
+                logger.debug(f"Failed to decode aggregated user list (raw): {exc}")
+
+        # 2) Rebuild from per-user keys
+        user_id_keys = []
+        pattern = f"{REDIS_KEY_PREFIX_USER_BY_ID}*"
+        cursor = 0
+        max_iterations = 10000
+        iteration = 0
+        while iteration < max_iterations:
+            cursor, keys = redis_client.scan(cursor, match=pattern, count=1000)
+            user_id_keys.extend(keys)
+            if cursor == 0:
+                break
+            iteration += 1
+
+        users: List[Dict[str, Any]] = []
+        seen_user_ids = set()
+
+        if user_id_keys:
+            batch_size = 1000
+            for i in range(0, len(user_id_keys), batch_size):
+                batch_keys = user_id_keys[i : i + batch_size]
+                pipe = redis_client.pipeline()
+                for key in batch_keys:
+                    pipe.get(key)
+                results = pipe.execute()
+
+                for user_json in results:
+                    if not user_json:
+                        continue
+                    try:
+                        user_dict = json.loads(user_json)
+                        user_id = user_dict.get("id")
+                        if user_id and user_id not in seen_user_ids:
+                            seen_user_ids.add(user_id)
+                            if user_dict.get("status") != UserStatus.deleted.value:
+                                users.append(user_dict)
+                    except Exception as e:
+                        logger.debug(f"Failed to deserialize user (raw): {e}")
+                        continue
+
+        # Fallback to DB when no per-user cache exists
+        if not users and db:
+            try:
+                from app.db.crud import get_user_queryset
+
+                query = get_user_queryset(db, eager_load=False)
+                db_users = query.all()
+                users = [_serialize_user(u) for u in db_users if getattr(u, "status", None) != UserStatus.deleted]
+                try:
+                    pipe = redis_client.pipeline()
+                    for u in users:
+                        serialized = json.dumps(u)
+                        user_id = u.get("id")
+                        username = u.get("username")
+                        if user_id:
+                            pipe.setex(_get_user_id_key(user_id), USER_CACHE_TTL, serialized)
+                        if username:
+                            pipe.setex(_get_user_key(username), USER_CACHE_TTL, serialized)
+                    pipe.execute()
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.error(f"Failed to load users from database (raw): {e}")
+                users = []
+
+        # Refresh aggregated list if we have anything
+        if users:
+            try:
+                ttl = redis_client.ttl(REDIS_KEY_USER_LIST_ALL)
+                ttl_value = ttl if ttl and ttl > 0 else USER_CACHE_TTL
+                redis_client.setex(
+                    REDIS_KEY_USER_LIST_ALL,
+                    ttl_value,
+                    json.dumps(users),
+                )
+            except Exception as exc:
+                logger.debug(f"Failed to cache aggregated user list (raw): {exc}")
+            return users
+
+        return users
+    except Exception as e:
+        logger.error(f"Failed to get all users (raw) from cache: {e}")
         return []
 
 
@@ -513,6 +657,14 @@ def warmup_users_cache() -> Tuple[int, int]:
                 pipe.setex(_get_user_key(user.username), USER_CACHE_TTL, user_json)
                 cached_count += 1
             pipe.execute()
+            try:
+                redis_client.setex(
+                    REDIS_KEY_USER_LIST_ALL,
+                    USER_CACHE_TTL,
+                    json.dumps([_serialize_user(u) for u in all_users]),
+                )
+            except Exception:
+                pass
 
         return (total_count, cached_count)
     except Exception as e:

@@ -286,6 +286,7 @@ export const CoreSettingsPage: FC = () => {
   const [outboundsTraffic, setOutboundsTraffic] = useState<any[]>([]);
   const [editingRuleIndex, setEditingRuleIndex] = useState<number | null>(null);
   const [editingOutboundIndex, setEditingOutboundIndex] = useState<number | null>(null);
+  const [editingDnsIndex, setEditingDnsIndex] = useState<number | null>(null);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [advSettings, setAdvSettings] = useState<string>("xraySetting");
   const [obsSettings, setObsSettings] = useState<string>("");
@@ -621,11 +622,18 @@ export const CoreSettingsPage: FC = () => {
   };
 
   const addDnsServer = () => {
+    setEditingDnsIndex(null);
     onDnsOpen();
   };
 
   const editDnsServer = (index: number) => {
+    setEditingDnsIndex(index);
     onDnsOpen();
+  };
+
+  const handleDnsModalClose = () => {
+    setEditingDnsIndex(null);
+    onDnsClose();
   };
 
   const deleteDnsServer = (index: number) => {
@@ -2004,7 +2012,14 @@ export const CoreSettingsPage: FC = () => {
         onDelete={handleWarpDelete}
       />
       <BalancerModal isOpen={isBalancerOpen} onClose={onBalancerClose} form={form} setBalancersData={setBalancersData} />
-      <DnsModal isOpen={isDnsOpen} onClose={onDnsClose} form={form} setDnsServers={setDnsServers} />
+      <DnsModal
+        isOpen={isDnsOpen}
+        onClose={handleDnsModalClose}
+        form={form}
+        setDnsServers={setDnsServers}
+        dnsIndex={editingDnsIndex}
+        currentDnsData={editingDnsIndex !== null ? dnsServers[editingDnsIndex] : null}
+      />
       <FakeDnsModal isOpen={isFakeDnsOpen} onClose={onFakeDnsClose} form={form} setFakeDns={setFakeDns} />
     </VStack>
   );

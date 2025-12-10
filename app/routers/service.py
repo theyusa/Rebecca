@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.runtime import xray
 from app.db import GetDB, crud, get_db
+from app.services import metrics_service
 from app.utils.concurrency import threaded_function
 from app.db.models import Service, User
 from app.dependencies import validate_dates
@@ -348,7 +349,7 @@ def get_service_usage_timeseries(
     if granularity_value not in {"day", "hour"}:
         granularity_value = "day"
 
-    rows = crud.get_service_usage_timeseries(db, service, start_dt, end_dt, granularity_value)
+    rows = metrics_service.get_service_usage_timeseries(db, service, start_dt, end_dt, granularity_value)
     points = [ServiceUsagePoint(timestamp=row["timestamp"], used_traffic=int(row["used_traffic"] or 0)) for row in rows]
 
     return ServiceUsageTimeseries(
@@ -374,7 +375,7 @@ def get_service_usage_by_admin(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
 
     start_dt, end_dt = validate_dates(start, end)
-    rows = crud.get_service_admin_usage(db, service, start_dt, end_dt)
+    rows = metrics_service.get_service_usage_by_admin(db, service, start_dt, end_dt)
     admins = [
         ServiceAdminUsage(
             admin_id=row.get("admin_id"),
@@ -433,7 +434,7 @@ def get_service_admin_usage_timeseries(
     if granularity_value not in {"day", "hour"}:
         granularity_value = "day"
 
-    usage_rows = crud.get_service_admin_usage_timeseries(
+    usage_rows = metrics_service.get_service_admin_usage_timeseries(
         db, service, target_admin_id, start_dt, end_dt, granularity_value
     )
     points = [

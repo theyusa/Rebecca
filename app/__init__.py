@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 import warnings
+from pathlib import Path
 
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated", category=UserWarning)
 
@@ -14,11 +15,15 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
 from config import ALLOWED_ORIGINS, DOCS, XRAY_SUBSCRIPTION_PATH
+
+_PROTO_ROOT = Path(__file__).resolve().parent / "proto"
+if _PROTO_ROOT.exists():
+    sys.path.append(str(_PROTO_ROOT))
 from app import runtime
 from app.db import GetDB, crud
 from app.utils.system import register_scheduler_jobs
 
-__version__ = "0.0.27"
+__version__ = "0.0.28"
 
 IS_RUNNING_TESTS = "PYTEST_CURRENT_TEST" in os.environ
 IS_RUNNING_ALEMBIC = any("alembic" in (arg or "").lower() for arg in sys.argv)

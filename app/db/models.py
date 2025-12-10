@@ -124,6 +124,7 @@ class PanelSettings(Base):
         default="key",
         server_default=text("'key'"),
     )
+    access_insights_enabled = Column(Boolean, nullable=False, default=False, server_default=text("0"))
     created_at = Column(DateTime, default=utcnow, nullable=False)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 

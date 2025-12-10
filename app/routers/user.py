@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Union
+import time
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
@@ -25,6 +26,7 @@ from app.utils.credentials import ensure_user_credential_key
 from app.utils.subscription_links import build_subscription_links
 from app import runtime
 from app.runtime import logger
+from app.services import metrics_service
 
 xray = runtime.xray
 
@@ -283,10 +285,40 @@ def modify_user(
             detail="Only sudo admins can set service to null.",
         )
 
+    service_set = "service_id" in modified_user.model_fields_set
+    target_service = None
+    db_admin = None
+    if service_set and modified_user.service_id is not None:
+        target_service = crud.get_service(db, modified_user.service_id)
+        if not target_service:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
+
+        _ensure_service_visibility(target_service, admin)
+
+        from app.services.data_access import get_service_allowed_inbounds_cached
+
+        allowed_inbounds = get_service_allowed_inbounds_cached(db, target_service)
+        if not allowed_inbounds or not any(allowed_inbounds.values()):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Service does not have any active hosts",
+            )
+
+        db_admin = crud.get_admin(db, admin.username)
+        if not db_admin:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin not found")
+
     old_status = dbuser.status
 
     try:
-        dbuser = crud.update_user(db, dbuser, modified_user)
+        dbuser = crud.update_user(
+            db,
+            dbuser,
+            modified_user,
+            service=target_service,
+            service_set=service_set,
+            admin=db_admin,
+        )
     except UsersLimitReachedError as exc:
         report.admin_users_limit_reached(admin, exc.limit, exc.current_active)
         db.rollback()
@@ -413,6 +445,19 @@ def get_users(
     - **filter**: repeatable advanced filter keys (online, offline, finished, limit, unlimited, sub_not_updated, sub_never_updated, expired, limited, disabled, on_hold).
     - **service_id**: Filter users who belong to a specific service.
     """
+    start_ts = time.perf_counter()
+    logger.info(
+        "GET /users called with params: offset=%s limit=%s username=%s search=%s owner=%s status=%s filters=%s service_id=%s sort=%s",
+        offset,
+        limit,
+        username,
+        search,
+        owner,
+        status,
+        advanced_filters,
+        service_id,
+        sort,
+    )
     if sort is not None:
         opts = sort.strip(",").split(",")
         sort = []
@@ -422,7 +467,6 @@ def get_users(
             except KeyError:
                 raise HTTPException(status_code=400, detail=f'"{opt}" is not a valid sort option')
 
-    # Determine admin filtering based on role
     owners = owner if admin.role in (AdminRole.sudo, AdminRole.full_access) else None
     dbadmin = None
     users_limit = None
@@ -433,53 +477,26 @@ def get_users(
         if not dbadmin:
             raise HTTPException(status_code=404, detail="Admin not found")
         users_limit = dbadmin.users_limit
-        active_total = crud.get_users_count(
-            db,
-            status=UserStatus.active,
-            admin=dbadmin,
-        )
 
-    from app.models.user import _skip_expensive_computations
+    from app.services import user_service
 
-    token = _skip_expensive_computations.set(True)
-    try:
-        users, count = crud.get_users(
-            db=db,
-            offset=offset,
-            limit=limit,
-            search=search,
-            usernames=username,
-            status=status,
-            sort=sort,
-            advanced_filters=advanced_filters,
-            service_id=service_id,
-            admin=dbadmin,
-            admins=owners,
-            return_with_count=True,
-        )
-
-        user_responses = []
-        link_templates = {}  # Intentionally empty to keep list responses fast
-
-        for user in users:
-            resp = UserResponse.model_validate(user)
-            # Skip heavy subscription/link generation on bulk list to reduce latency
-            resp.links = []
-            resp.subscription_url = ""
-            resp.subscription_urls = {}
-            resp.link_data = []
-            resp.credentials = {}
-            user_responses.append(resp)
-    finally:
-        _skip_expensive_computations.reset(token)
-
-    return {
-        "users": user_responses,
-        "link_templates": link_templates,  # Templates for frontend to generate links
-        "total": count,
-        "active_total": active_total,
-        "users_limit": users_limit,
-    }
+    response = user_service.get_users_list(
+        db,
+        offset=offset,
+        limit=limit,
+        username=username,
+        search=search,
+        status=status,
+        sort=sort,
+        advanced_filters=advanced_filters,
+        service_id=service_id,
+        dbadmin=dbadmin,
+        owners=owners,
+        users_limit=users_limit,
+        active_total=active_total,
+    )
+    logger.info("USERS: handler finished in %.3f s", time.perf_counter() - start_ts)
+    return response
 
 
 @router.post("/users/actions", responses={403: responses._403})
@@ -671,7 +688,7 @@ def get_user_usage(
     """Get users usage"""
     start, end = validate_dates(start, end)
 
-    usages = crud.get_user_usages(db, dbuser, start, end)
+    usages = metrics_service.get_user_usage(db, dbuser, start, end)
 
     return {"usages": usages, "username": dbuser.username}
 
@@ -725,11 +742,12 @@ def get_users_usage(
     """Get all users usage"""
     start, end = validate_dates(start, end)
 
-    usages = crud.get_all_users_usages(
+    admins_filter = owner if admin.role in (AdminRole.sudo, AdminRole.full_access) else [admin.username]
+    usages = metrics_service.get_users_usage(
         db=db,
+        admins=admins_filter,
         start=start,
         end=end,
-        admin=owner if admin.role in (AdminRole.sudo, AdminRole.full_access) else [admin.username],
     )
 
     return {"usages": usages}

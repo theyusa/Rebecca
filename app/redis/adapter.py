@@ -21,6 +21,7 @@ from app.redis.subscription import (
     get_username_by_key,
     cache_user_subscription,
 )
+from app.redis.cache import get_cached_user, cache_user
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,18 @@ def _to_utc_aware(dt: Optional[datetime]) -> Optional[datetime]:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _get_fresh_user(db: Session, username: str) -> Optional[User]:
+    """
+    Always fetch the latest user record (with proxies) from the database.
+    Falls back to None on failure so callers can decide the fallback.
+    """
+    try:
+        return crud.get_user(db, username)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Failed to fetch fresh user %s from DB: %s", username, exc)
+        return None
 
 
 def is_redis_available() -> bool:
@@ -73,13 +86,32 @@ def validate_subscription_by_token(token: str, db: Session) -> UserResponse:
 
     username = sub["username"]
 
+    token_created_at = _to_utc_aware(sub.get("created_at"))
+    if token_created_at is None:
+        raise HTTPException(status_code=404, detail="Not Found")
+
     # Try Redis first if available
     if is_redis_available():
         try:
-            username_exists = check_username_exists(username)
-            if username_exists is False:
-                # Username not in cache and Redis is available, so user doesn't exist
-                raise HTTPException(status_code=404, detail="Not Found")
+            cached_user = get_cached_user(username=username)
+            if cached_user:
+                fresh_user = _get_fresh_user(db, username) or cached_user
+                db_created_at = _to_utc_aware(getattr(fresh_user, "created_at", None))
+                if not db_created_at or db_created_at > token_created_at:
+                    raise HTTPException(status_code=404, detail="Not Found")
+                revoked_at = _to_utc_aware(getattr(fresh_user, "sub_revoked_at", None))
+                if revoked_at and revoked_at > token_created_at:
+                    raise HTTPException(status_code=404, detail="Not Found")
+                # Refresh subscription cache TTL
+                try:
+                    cache_user_subscription(
+                        username=fresh_user.username,
+                        credential_key=getattr(fresh_user, "credential_key", None),
+                    )
+                    cache_user(fresh_user)
+                except Exception:
+                    pass
+                return fresh_user
         except HTTPException:
             raise
         except Exception as e:
@@ -87,11 +119,6 @@ def validate_subscription_by_token(token: str, db: Session) -> UserResponse:
 
     # Query database for validation and full data
     dbuser = crud.get_user(db, username)
-
-    # Normalize timestamps to UTC-aware before comparing so we never mix aware/naive
-    token_created_at = _to_utc_aware(sub.get("created_at"))
-    if token_created_at is None:
-        raise HTTPException(status_code=404, detail="Not Found")
     db_created_at = _to_utc_aware(dbuser.created_at) if dbuser else None
 
     if not dbuser or db_created_at is None or db_created_at > token_created_at:
@@ -105,6 +132,7 @@ def validate_subscription_by_token(token: str, db: Session) -> UserResponse:
     # Cache the user for future requests
     if is_redis_available():
         try:
+            cache_user(dbuser)
             cache_user_subscription(
                 username=dbuser.username,
                 credential_key=dbuser.credential_key,
@@ -143,16 +171,22 @@ def validate_subscription_by_key(
     # Try Redis first if available
     if is_redis_available():
         try:
-            username_exists = check_username_exists(username)
-            if username_exists is False:
-                # Username not in cache and Redis is available
-                raise HTTPException(status_code=404, detail="Not Found")
-
-            # Check if credential key maps to this username
             cached_username = get_username_by_key(credential_key)
             if cached_username and cached_username.lower() != username.lower():
-                # Key exists but maps to different username
                 raise HTTPException(status_code=404, detail="Not Found")
+
+            cached_user = get_cached_user(username=username)
+            if cached_user and getattr(cached_user, "credential_key", None):
+                try:
+                    fresh_user = _get_fresh_user(db, username) or cached_user
+                    if normalize_key(fresh_user.credential_key) == normalized_key:
+                        cache_user_subscription(
+                            username=fresh_user.username, credential_key=fresh_user.credential_key
+                        )
+                        cache_user(fresh_user)
+                        return fresh_user
+                except ValueError:
+                    pass
         except HTTPException:
             raise
         except Exception as e:
@@ -176,6 +210,7 @@ def validate_subscription_by_key(
     # Cache the user for future requests
     if is_redis_available():
         try:
+            cache_user(dbuser)
             cache_user_subscription(
                 username=dbuser.username,
                 credential_key=dbuser.credential_key,
@@ -210,27 +245,23 @@ def validate_subscription_by_key_only(
         raise HTTPException(status_code=400, detail="Invalid credential key")
 
     # Try Redis first if available
-    cached_username = None
     if is_redis_available():
         try:
             cached_username = get_username_by_key(credential_key)
             if cached_username:
-                # Key exists in cache, query database for full user data
-                dbuser = crud.get_user(db, cached_username)
-                if dbuser and dbuser.credential_key:
+                cached_user = get_cached_user(username=cached_username)
+                if cached_user and getattr(cached_user, "credential_key", None):
                     try:
-                        if normalize_key(dbuser.credential_key) == normalized_key:
-                            # Cache again to refresh TTL
-                            try:
-                                cache_user_subscription(
-                                    username=dbuser.username,
-                                    credential_key=dbuser.credential_key,
-                                )
-                            except Exception:
-                                pass
-                            return dbuser
+                        fresh_user = _get_fresh_user(db, cached_username) or cached_user
+                        if normalize_key(fresh_user.credential_key) == normalized_key:
+                            cache_user_subscription(
+                                username=fresh_user.username,
+                                credential_key=fresh_user.credential_key,
+                            )
+                            cache_user(fresh_user)
+                            return fresh_user
                     except ValueError:
-                        pass  # Invalid key format, continue to DB query
+                        pass
         except Exception as e:
             logger.debug(f"Redis lookup failed, falling back to database: {e}")
 
@@ -247,6 +278,7 @@ def validate_subscription_by_key_only(
     # Cache the user for future requests
     if is_redis_available():
         try:
+            cache_user(dbuser)
             cache_user_subscription(
                 username=dbuser.username,
                 credential_key=dbuser.credential_key,

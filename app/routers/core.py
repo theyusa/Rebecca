@@ -1,10 +1,13 @@
 import asyncio
 import time
+import json
+import contextlib
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, Body
 from starlette.websockets import WebSocketDisconnect
 
 from app.runtime import xray
+from app.services import access_insights
 from app.db import Session, get_db, crud, GetDB
 from app.models.admin import Admin, AdminRole
 from app.models.core import CoreStats, ServerIPs
@@ -199,6 +202,182 @@ async def core_logs(websocket: WebSocket):
                 await websocket.send_text(log)
             except (WebSocketDisconnect, RuntimeError):
                 break
+
+
+@router.get("/core/access/insights", responses={403: responses._403})
+def get_access_insights(
+    limit: int = 200,
+    lookback: int = 2000,
+    search: str = "",
+    window_seconds: int = 120,
+    admin: Admin = Depends(Admin.get_current),
+):
+    """
+    Return recent access log entries enriched with geosite/geoip labels.
+    LEGACY: Use /core/access/insights/multi-node for better performance and node support.
+    """
+    try:
+        payload = access_insights.build_access_insights(
+            limit=limit, lookback_lines=lookback, search=search, window_seconds=window_seconds
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    # Graceful return when log is missing
+    if payload.get("error") == "access_log_missing":
+        return payload
+    return payload
+
+
+@router.get("/core/access/insights/multi-node", responses={403: responses._403})
+def get_multi_node_access_insights(
+    limit: int = 200,
+    lookback: int = 1000,
+    search: str = "",
+    window_seconds: int = 120,
+    node_ids: str = "",
+    mode: str = "full",
+    admin: Admin = Depends(Admin.get_current),
+):
+    """
+    Return access insights from all nodes (master + connected nodes).
+    Optimized for lower RAM/CPU usage.
+
+    Args:
+        limit: Max number of clients to return
+        lookback: Number of log lines to read per node
+        search: Search filter (applied to destinations)
+        window_seconds: Time window to analyze (max 600)
+        node_ids: Comma-separated node IDs (empty = all nodes)
+    """
+    mode = (mode or "full").lower()
+    try:
+        node_id_list = None
+        if node_ids:
+            try:
+                node_id_list = [int(nid.strip()) for nid in node_ids.split(",") if nid.strip()]
+                if not any(nid is None for nid in node_id_list):
+                    node_id_list.append(None)  # Include master
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid node_ids format")
+
+        if mode in {"raw", "frontend"}:
+            sources = access_insights.get_all_log_sources()
+            return {
+                "mode": "raw",
+                "sources": [
+                    {"node_id": s.node_id, "node_name": s.node_name, "is_master": s.is_master} for s in sources
+                ],
+                "stream": {
+                    "ndjson": router.url_path_for("get_raw_access_logs"),
+                    "websocket": router.url_path_for("access_logs_ws"),
+                },
+                "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+
+        payload = access_insights.build_multi_node_insights(
+            limit=limit,
+            lookback_lines=lookback,
+            search=search,
+            window_seconds=window_seconds,
+            node_ids=node_id_list,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return payload
+
+
+@router.get("/core/access/logs/raw", responses={403: responses._403})
+def get_raw_access_logs(
+    max_lines: int = 500,
+    node_id: int = None,
+    search: str = "",
+    admin: Admin = Depends(Admin.get_current),
+):
+    """
+    Stream raw access log lines for frontend processing.
+    This reduces backend load by offloading parsing/analysis to the client.
+
+    Returns NDJSON (newline-delimited JSON) stream.
+
+    Args:
+        max_lines: Maximum lines to return (max 1000)
+        node_id: Specific node ID (null = all nodes)
+        search: Filter lines containing this text
+    """
+    from fastapi.responses import StreamingResponse
+    import json
+
+    max_lines = min(max_lines, 1000)
+
+    def generate():
+        try:
+            for chunk in access_insights.stream_raw_logs(
+                max_lines=max_lines,
+                node_id=node_id,
+                search=search,
+            ):
+                yield json.dumps(chunk) + "\n"
+        except Exception as e:
+            yield json.dumps({"error": str(e)}) + "\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
+
+
+@router.websocket("/core/access/logs/ws")
+async def access_logs_ws(websocket: WebSocket):
+    token = websocket.query_params.get("token") or websocket.headers.get("Authorization", "").removeprefix("Bearer ")
+    with GetDB() as db:
+        admin = Admin.get_admin(token, db)
+    if not admin:
+        return await websocket.close(reason="Unauthorized", code=4401)
+
+    if admin.role not in (AdminRole.sudo, AdminRole.full_access):
+        return await websocket.close(reason="You're not allowed", code=4403)
+
+    max_lines_raw = websocket.query_params.get("max_lines")
+    node_id_raw = websocket.query_params.get("node_id")
+    search = websocket.query_params.get("search") or ""
+
+    max_lines = 500
+    try:
+        if max_lines_raw:
+            max_lines = min(1000, max(1, int(max_lines_raw)))
+    except ValueError:
+        await websocket.close(reason="Invalid max_lines", code=4400)
+        return
+
+    node_id = None
+    if node_id_raw:
+        try:
+            node_id = int(node_id_raw)
+        except ValueError:
+            await websocket.close(reason="Invalid node_id", code=4400)
+            return
+
+    await websocket.accept()
+    try:
+        for chunk in access_insights.stream_raw_logs(
+            max_lines=max_lines,
+            node_id=node_id,
+            search=search,
+        ):
+            await websocket.send_text(json.dumps(chunk))
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        await websocket.send_text(json.dumps({"error": str(exc)}))
+    finally:
+        with contextlib.suppress(Exception):
+            await websocket.close()
 
 
 @router.get("/core", response_model=CoreStats)

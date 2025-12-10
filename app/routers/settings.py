@@ -73,6 +73,7 @@ def get_panel_settings(_: Admin = Depends(Admin.require_active)):
     return PanelSettingsResponse(
         use_nobetci=settings.use_nobetci,
         default_subscription_type=settings.default_subscription_type,
+        access_insights_enabled=settings.access_insights_enabled,
     )
 
 
@@ -86,4 +87,5 @@ def update_panel_settings(
     return PanelSettingsResponse(
         use_nobetci=settings.use_nobetci,
         default_subscription_type=settings.default_subscription_type,
+        access_insights_enabled=settings.access_insights_enabled,
     )

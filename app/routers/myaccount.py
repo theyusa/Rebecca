@@ -9,6 +9,7 @@ from app.db import get_db, crud
 from app.dependencies import validate_dates
 from app.models.admin import Admin, AdminModify
 from app.models.admin import AdminInDB, AdminRole
+from app.services import metrics_service
 
 
 router = APIRouter(prefix="/api", tags=["MyAccount"])
@@ -98,39 +99,23 @@ def get_myaccount(
         start_dt = end_dt - timedelta(days=7)
     else:
         start_dt, end_dt = validate_dates(start, end)
-    used_traffic = int(dbadmin.users_usage or 0)
-    data_limit = dbadmin.data_limit
-    remaining_data: Optional[int]
-    if data_limit is None:
-        remaining_data = None
-    else:
-        remaining_data = max(data_limit - used_traffic, 0)
-
-    users_limit = dbadmin.users_limit
-    current_users_count = crud.get_users_count(db=db, admin=dbadmin)
-    if users_limit is None:
-        remaining_users = None
-    else:
-        remaining_users = max(users_limit - current_users_count, 0)
-
-    daily_usage = crud.get_admin_daily_usages(db, dbadmin, start_dt, end_dt)
-    per_node_usage = crud.get_admin_usage_by_nodes(db, dbadmin, start_dt, end_dt)
+    summary = metrics_service.get_myaccount_summary_and_charts(db, dbadmin, start_dt, end_dt)
 
     return MyAccountResponse(
-        data_limit=data_limit,
-        used_traffic=used_traffic,
-        remaining_data=remaining_data,
-        users_limit=users_limit,
-        current_users_count=current_users_count,
-        remaining_users=remaining_users,
-        daily_usage=[MyAccountUsagePoint(**item) for item in daily_usage],
+        data_limit=summary.get("data_limit"),
+        used_traffic=summary.get("used_traffic", 0),
+        remaining_data=summary.get("remaining_data"),
+        users_limit=summary.get("users_limit"),
+        current_users_count=summary.get("current_users_count", 0),
+        remaining_users=summary.get("remaining_users"),
+        daily_usage=[MyAccountUsagePoint(**item) for item in summary.get("daily_usage", [])],
         node_usages=[
             MyAccountNodeUsage(
                 node_id=item.get("node_id"),
                 node_name=item.get("node_name") or "",
                 used_traffic=int(item.get("used_traffic") or 0),
             )
-            for item in per_node_usage
+            for item in summary.get("node_usages", [])
         ],
     )
 
@@ -272,7 +257,7 @@ def get_myaccount_nodes(
         start_dt = end_dt - timedelta(days=7)
     else:
         start_dt, end_dt = validate_dates(start, end)
-    per_node_usage = crud.get_admin_usage_by_nodes(db, dbadmin, start_dt, end_dt)
+    per_node_usage = metrics_service.get_admin_usage_by_nodes(db, dbadmin, start_dt, end_dt)
 
     return {
         "node_usages": [

@@ -14,6 +14,8 @@ type AdminsStore = {
   total: number;
   loading: boolean;
   lastFetchedAt: number | null;
+  currentRequestKey: string | null;
+  inflight: Promise<void> | null;
   filters: AdminFilters;
   isAdminDialogOpen: boolean;
   adminInDialog: Admin | null;
@@ -49,13 +51,15 @@ export const useAdminsStore = create<AdminsStore>((set, get) => ({
   total: 0,
   loading: false,
   lastFetchedAt: null,
+  currentRequestKey: null,
+  inflight: null,
   filters: defaultFilters,
   isAdminDialogOpen: false,
   adminInDialog: null,
   isAdminDetailsOpen: false,
   adminInDetails: null,
   async fetchAdmins(overrides, options) {
-    const { filters: stateFilters, lastFetchedAt, loading } = get();
+    const { filters: stateFilters, lastFetchedAt, loading, currentRequestKey, inflight } = get();
     const now = Date.now();
     const force = options?.force === true;
 
@@ -64,10 +68,6 @@ export const useAdminsStore = create<AdminsStore>((set, get) => ({
     if (!force && !hasOverrides && lastFetchedAt && now - lastFetchedAt < 60_000) {
       return;
     }
-    if (loading) {
-      return;
-    }
-
     const filters = {
       ...stateFilters,
       ...overrides,
@@ -92,31 +92,45 @@ export const useAdminsStore = create<AdminsStore>((set, get) => ({
       }
     }
 
-    set({ loading: true });
-    try {
-      const data = await fetch<{ admins: Admin[]; total: number } | Admin[]>("/admins", { query });
-      const { admins, total } = Array.isArray(data)
-        ? { admins: data, total: data.length }
-        : { admins: data.admins || [], total: data.total || 0 };
-
-      set((state) => {
-        const currentDetails = state.adminInDetails
-          ? admins.find((admin) => admin.username === state.adminInDetails?.username) ||
-            state.adminInDetails
-          : null;
-        return {
-          admins,
-          total,
-          adminInDetails: currentDetails,
-          lastFetchedAt: now,
-        };
-      });
-    } catch (error) {
-      console.error("Failed to fetch admins:", error);
-      set({ admins: [], total: 0, adminInDetails: null, lastFetchedAt: now });
-    } finally {
-      set({ loading: false });
+    const requestKey = JSON.stringify(query);
+    if (loading && currentRequestKey === requestKey && inflight) {
+      return inflight;
     }
+    if (!force && lastFetchedAt && now - lastFetchedAt < 60_000 && currentRequestKey === requestKey) {
+      return;
+    }
+
+    set({ loading: true });
+    const promise = (async () => {
+      try {
+        const data = await fetch<{ admins: Admin[]; total: number } | Admin[]>("/admins", { query });
+        const { admins, total } = Array.isArray(data)
+          ? { admins: data, total: data.length }
+          : { admins: data.admins || [], total: data.total || 0 };
+
+        set((state) => {
+          const currentDetails = state.adminInDetails
+            ? admins.find((admin) => admin.username === state.adminInDetails?.username) ||
+              state.adminInDetails
+            : null;
+          return {
+            admins,
+            total,
+            adminInDetails: currentDetails,
+            lastFetchedAt: now,
+            currentRequestKey: requestKey,
+          };
+        });
+      } catch (error) {
+        console.error("Failed to fetch admins:", error);
+        set({ admins: [], total: 0, adminInDetails: null, lastFetchedAt: now, currentRequestKey: requestKey });
+      } finally {
+        set({ loading: false, inflight: null });
+      }
+    })();
+
+    set({ inflight: promise, currentRequestKey: requestKey });
+    return promise;
   },
   setFilters(partial) {
     set((state) => ({

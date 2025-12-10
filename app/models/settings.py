@@ -66,8 +66,10 @@ class TelegramSettingsUpdate(BaseModel):
 class PanelSettingsResponse(BaseModel):
     use_nobetci: bool = False
     default_subscription_type: SubscriptionLinkType = SubscriptionLinkType.key
+    access_insights_enabled: bool = False
 
 
 class PanelSettingsUpdate(BaseModel):
     use_nobetci: Optional[bool] = None
     default_subscription_type: Optional[SubscriptionLinkType] = None
+    access_insights_enabled: Optional[bool] = None

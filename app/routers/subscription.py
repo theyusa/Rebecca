@@ -15,6 +15,7 @@ from app.dependencies import (
 from app.models.user import SubscriptionUserResponse, UserResponse
 from app.subscription.share import encode_title, generate_subscription, is_credential_key
 from app.templates import render_template
+from app.utils.proxy_uuid import ensure_user_proxy_uuids
 from config import (
     SUB_PROFILE_TITLE,
     SUB_SUPPORT_URL,
@@ -88,6 +89,7 @@ def _serve_subscription_response(
     dbuser: UserResponse,
     user_agent: str,
 ):
+    ensure_user_proxy_uuids(db, dbuser)
     user: UserResponse = UserResponse.model_validate(dbuser)
 
     accept_header = request.headers.get("Accept", "")
@@ -150,7 +152,8 @@ def _serve_subscription_response(
     return Response(content=conf, media_type="text/plain", headers=response_headers)
 
 
-def _subscription_with_client_type(request: Request, dbuser: UserResponse, client_type: str):
+def _subscription_with_client_type(request: Request, dbuser: UserResponse, client_type: str, db: Session):
+    ensure_user_proxy_uuids(db, dbuser)
     user: UserResponse = UserResponse.model_validate(dbuser)
     response_headers = {
         "content-disposition": f'attachment; filename="{user.username}"',
@@ -331,9 +334,10 @@ def user_subscription_with_client_type_by_key(
     credential_key: str = Path(...),
     client_type: str = Path(...),
     dbuser: UserResponse = Depends(get_validated_sub_by_key),
+    db: Session = Depends(get_db),
 ):
     _validate_client_type(client_type)
-    return _subscription_with_client_type(request, dbuser, client_type)
+    return _subscription_with_client_type(request, dbuser, client_type, db)
 
 
 @router.get("/{identifier}/{client_type}")
@@ -345,4 +349,4 @@ def user_subscription_with_client_type(
 ):
     dbuser = _get_user_by_identifier(identifier, db)
     _validate_client_type(client_type)
-    return _subscription_with_client_type(request, dbuser, client_type)
+    return _subscription_with_client_type(request, dbuser, client_type, db)

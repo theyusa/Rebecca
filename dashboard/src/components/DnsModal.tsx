@@ -13,7 +13,7 @@ import {
   Button,
   Text,
 } from "@chakra-ui/react";
-import { FC } from "react";
+import { FC, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 
@@ -22,10 +22,11 @@ interface DnsModalProps {
   onClose: () => void;
   form: any;
   setDnsServers: (data: any[]) => void;
-  dnsIndex?: number;
+  dnsIndex?: number | null;
+  currentDnsData?: any;
 }
 
-export const DnsModal: FC<DnsModalProps> = ({ isOpen, onClose, form, setDnsServers, dnsIndex }) => {
+export const DnsModal: FC<DnsModalProps> = ({ isOpen, onClose, form, setDnsServers, dnsIndex, currentDnsData }) => {
   const { t } = useTranslation();
   const modalForm = useForm({
     defaultValues: {
@@ -35,15 +36,34 @@ export const DnsModal: FC<DnsModalProps> = ({ isOpen, onClose, form, setDnsServe
     },
   });
 
+  useEffect(() => {
+    if (isOpen && currentDnsData && dnsIndex !== null) {
+      // Edit mode - load existing DNS data
+      const dnsData = typeof currentDnsData === "object" ? currentDnsData : { address: currentDnsData };
+      modalForm.reset({
+        address: dnsData.address || "",
+        domains: Array.isArray(dnsData.domains) ? dnsData.domains.join(",") : "",
+        expectIPs: Array.isArray(dnsData.expectIPs) ? dnsData.expectIPs.join(",") : "",
+      });
+    } else if (isOpen && dnsIndex === null) {
+      // Create mode - reset to empty
+      modalForm.reset({
+        address: "",
+        domains: "",
+        expectIPs: "",
+      });
+    }
+  }, [isOpen, currentDnsData, dnsIndex, modalForm]);
+
   const handleSubmit = modalForm.handleSubmit((data) => {
     const newDns = {
       address: data.address,
-      domains: data.domains ? data.domains.split(",") : [],
-      expectIPs: data.expectIPs ? data.expectIPs.split(",") : [],
+      domains: data.domains ? data.domains.split(",").map(d => d.trim()).filter(Boolean) : [],
+      expectIPs: data.expectIPs ? data.expectIPs.split(",").map(ip => ip.trim()).filter(Boolean) : [],
     };
 
     const currentDnsServers = form.getValues("config.dns.servers") || [];
-    if (dnsIndex !== undefined) {
+    if (dnsIndex !== null && dnsIndex !== undefined) {
       currentDnsServers[dnsIndex] = newDns;
     } else {
       currentDnsServers.push(newDns);
@@ -60,7 +80,7 @@ export const DnsModal: FC<DnsModalProps> = ({ isOpen, onClose, form, setDnsServe
       <ModalContent mx="3">
         <ModalHeader pt={6}>
           <Text fontWeight="semibold" fontSize="lg">
-            {dnsIndex !== undefined ? t("pages.xray.dns.edit") : t("pages.xray.dns.add")}
+            {dnsIndex !== null ? t("pages.xray.dns.edit") : t("pages.xray.dns.add")}
           </Text>
         </ModalHeader>
         <ModalCloseButton mt={3} />
@@ -79,8 +99,8 @@ export const DnsModal: FC<DnsModalProps> = ({ isOpen, onClose, form, setDnsServe
                 <FormLabel>{t("pages.xray.dns.expectIPs")}</FormLabel>
                 <Input {...modalForm.register("expectIPs")} size="sm" placeholder="1.1.1.1,2.2.2.2" />
               </FormControl>
-              <Button type="submit" colorScheme="primary" size="sm">
-                {dnsIndex !== undefined ? t("pages.xray.dns.edit") : t("pages.xray.dns.add")}
+              <Button type="submit" colorScheme="primary" size="sm" w="full">
+                {dnsIndex !== null ? t("pages.xray.dns.edit") : t("pages.xray.dns.add")}
               </Button>
             </VStack>
           </form>

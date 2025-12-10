@@ -10,6 +10,7 @@ import { HostsPage } from "./HostsPage";
 import { NodesPage } from "./NodesPage";
 import { CoreSettingsPage } from "./CoreSettingsPage";
 import { XrayLogsPage } from "./XrayLogsPage";
+import AccessInsightsPage from "./AccessInsightsPage";
 import ServicesPage from "./ServicesPage";
 import UsagePage from "./UsagePage";
 import { IntegrationSettingsPage } from "./IntegrationSettingsPage";
@@ -87,6 +88,10 @@ export const router = createHashRouter([
       {
         path: "xray-logs",
         element: <XrayLogsPage />,
+      },
+      {
+        path: "access-insights",
+        element: <AccessInsightsPage />,
       },
     ],
   },

@@ -14,6 +14,7 @@ from app.subscription.share import generate_v2ray_links
 from app.utils.credentials import (
     apply_credentials_to_settings,
     runtime_proxy_settings,
+    PASSWORD_PROTOCOLS,
     UUID_PROTOCOLS,
 )
 from xray_api.types.account import Account
@@ -674,27 +675,34 @@ class UserResponse(User):
 
     @model_validator(mode="after")
     def populate_proxy_credentials(self):
-        if self.credential_key:
-            updated_proxies = {}
-            for proxy_type, settings in self.proxies.items():
+        if not self.credential_key:
+            return self
+
+        updated_proxies = {}
+        for proxy_type, settings in self.proxies.items():
+            try:
+                resolved_type = proxy_type if isinstance(proxy_type, ProxyTypes) else ProxyTypes(str(proxy_type))
+            except Exception:
+                continue
+
+            # Ensure settings is a ProxySettings instance
+            settings_obj = settings
+            if not isinstance(settings_obj, ProxySettings):
                 try:
-                    resolved_type = proxy_type if isinstance(proxy_type, ProxyTypes) else ProxyTypes(str(proxy_type))
+                    settings_obj = ProxySettings.from_dict(resolved_type, settings)
                 except Exception:
                     continue
 
-                # Ensure settings is a ProxySettings instance
-                settings_obj = settings
-                if not isinstance(settings_obj, ProxySettings):
-                    try:
-                        settings_obj = ProxySettings.from_dict(resolved_type, settings)
-                    except Exception:
-                        continue
-
+            # Only backfill missing credentials; keep DB as source of truth when a UUID/password already exists
+            needs_uuid = resolved_type in UUID_PROTOCOLS and not getattr(settings_obj, "id", None)
+            needs_password = resolved_type in PASSWORD_PROTOCOLS and not getattr(settings_obj, "password", None)
+            if needs_uuid or needs_password:
                 apply_credentials_to_settings(settings_obj, resolved_type, self.credential_key)
-                updated_proxies[resolved_type] = settings_obj
 
-            if updated_proxies:
-                self.proxies = updated_proxies
+            updated_proxies[resolved_type] = settings_obj
+
+        if updated_proxies:
+            self.proxies = updated_proxies
         return self
 
     @field_validator("proxies", mode="before")
@@ -768,11 +776,33 @@ class SubscriptionUserResponse(UserResponse):
     model_config = ConfigDict(from_attributes=True)
 
 
+class UserListItem(BaseModel):
+    """
+    Lightweight shape returned by /api/users list endpoint.
+    For detailed user information, call /api/user/{username}.
+    """
+
+    username: str
+    status: UserStatus
+    used_traffic: int
+    lifetime_used_traffic: int = 0
+    created_at: datetime
+    expire: Optional[int] = None
+    data_limit: Optional[int] = None
+    data_limit_reset_strategy: Optional[UserDataLimitResetStrategy] = None
+    online_at: Optional[datetime] = None
+    service_id: int | None = None
+    service_name: str | None = None
+    admin_id: int | None = None
+    admin_username: str | None = None
+    subscription_url: str = ""
+    subscription_urls: Dict[str, str] = Field(default_factory=dict)
+    model_config = ConfigDict(from_attributes=True)
+
+
 class UsersResponse(BaseModel):
-    users: List[UserResponse]
-    link_templates: Dict[str, List[str]] = Field(
-        default_factory=dict
-    )  # Link templates by protocol (vless, vmess, trojan, ss)
+    users: List[UserListItem]
+    link_templates: Dict[str, List[str]] = Field(default_factory=dict)
     total: int
     active_total: Optional[int] = None
     users_limit: Optional[int] = None

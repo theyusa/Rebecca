@@ -48,7 +48,7 @@ import { t } from "i18next";
 import { FC, Fragment, useEffect, useLayoutEffect, useState } from "react";
 import CopyToClipboard from "react-copy-to-clipboard";
 import { useTranslation } from "react-i18next";
-import { User } from "types/User";
+import { UserListItem } from "types/User";
 import { AdminRole, AdminStatus, UserPermissionToggle } from "types/Admin";
 import { formatBytes } from "utils/formatByte";
 import { OnlineBadge } from "./OnlineBadge";

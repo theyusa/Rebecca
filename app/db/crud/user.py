@@ -363,7 +363,11 @@ def _filter_users_in_memory(
             u
             for u in filtered
             if (
-                (getattr(u, "admin", None) and getattr(u.admin, "username", None) and u.admin.username.lower() in admin_set)
+                (
+                    getattr(u, "admin", None)
+                    and getattr(u.admin, "username", None)
+                    and u.admin.username.lower() in admin_set
+                )
                 or (getattr(u, "admin_username", None) and u.admin_username.lower() in admin_set)
             )
         ]
@@ -466,14 +470,15 @@ def get_users(
     try:
         from app.redis.cache import get_all_users_from_cache
         from app.redis.client import get_redis
-        from config import REDIS_ENABLED
+        from config import REDIS_ENABLED, REDIS_USERS_CACHE_ENABLED
 
-        if REDIS_ENABLED and get_redis():
+        if REDIS_ENABLED and REDIS_USERS_CACHE_ENABLED and get_redis():
             # Get all users from Redis (this is fast, just deserializes basic data)
             all_users = get_all_users_from_cache(db)
             # If aggregated list missing, ensure it's warmed for next calls
             try:
                 from app.redis.cache import REDIS_KEY_USER_LIST_ALL, get_redis, USER_CACHE_TTL, _serialize_user
+
                 redis_client = get_redis()
                 if redis_client and all_users:
                     redis_client.setex(

@@ -10,6 +10,7 @@ import {
   Squares2X2Icon,
   ChartPieIcon,
   UserCircleIcon,
+  GlobeAltIcon,
 } from "@heroicons/react/24/outline";
 import { NavLink, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -38,6 +39,7 @@ const ChevronDownIconStyled = chakra(ChevronDownIcon, iconProps);
 const ServicesIconStyled = chakra(Squares2X2Icon, iconProps);
 const UsageIconStyled = chakra(ChartPieIcon, iconProps);
 const MyAccountIconStyled = chakra(UserCircleIcon, iconProps);
+const InsightsIconStyled = chakra(GlobeAltIcon, iconProps);
 interface AppSidebarProps {
   collapsed: boolean;
   /** when rendered inside a Drawer on mobile */
@@ -113,6 +115,9 @@ export const AppSidebar: FC<AppSidebarProps> = ({ collapsed, inDrawer = false, o
       : null,
     sectionAccess?.[AdminSection.Xray]
       ? { title: t("header.xraySettings"), url: "/xray-settings", icon: SettingsIconStyled }
+      : null,
+    sectionAccess?.[AdminSection.Xray]
+      ? { title: t("header.accessInsights", "Access insights"), url: "/access-insights", icon: InsightsIconStyled }
       : null,
   ].filter(Boolean) as SidebarSubItems;
 

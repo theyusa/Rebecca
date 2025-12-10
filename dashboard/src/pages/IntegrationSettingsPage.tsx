@@ -431,8 +431,11 @@ export const IntegrationSettingsPage = () => {
   const { t } = useTranslation();
   const toast = useToast();
   const { userData, getUserIsSuccess } = useGetUser();
+  const isSudoOrFull =
+    userData?.role === "sudo" || userData?.role === "full_access";
   const canManageIntegrations =
-    getUserIsSuccess && Boolean(userData.permissions?.sections.integrations);
+    getUserIsSuccess &&
+    (isSudoOrFull || Boolean(userData.permissions?.sections.integrations));
   const queryClient = useQueryClient();
 
   const { data, isLoading, refetch } = useQuery("telegram-settings", getTelegramSettings, {
@@ -468,6 +471,9 @@ export const IntegrationSettingsPage = () => {
   }, [activeMaintenanceAction]);
 
   const [panelUseNobetci, setPanelUseNobetci] = useState<boolean>(panelData?.use_nobetci ?? false);
+  const [panelAccessInsightsEnabled, setPanelAccessInsightsEnabled] = useState<boolean>(
+    panelData?.access_insights_enabled ?? false
+  );
   const [panelDefaultSubType, setPanelDefaultSubType] = useState<"username-key" | "key" | "token">(
     panelData?.default_subscription_type ?? "key"
   );
@@ -475,6 +481,7 @@ export const IntegrationSettingsPage = () => {
   useEffect(() => {
     if (panelData) {
       setPanelUseNobetci(panelData.use_nobetci);
+      setPanelAccessInsightsEnabled(panelData.access_insights_enabled ?? false);
       setPanelDefaultSubType(panelData.default_subscription_type ?? "key");
     }
   }, [panelData]);
@@ -607,6 +614,7 @@ export const IntegrationSettingsPage = () => {
   const panelMutation = useMutation(updatePanelSettings, {
     onSuccess: (updated) => {
       setPanelUseNobetci(updated.use_nobetci);
+      setPanelAccessInsightsEnabled(updated.access_insights_enabled ?? false);
       setPanelDefaultSubType(updated.default_subscription_type ?? "key");
       queryClient.setQueryData("panel-settings", updated);
       toast({
@@ -711,6 +719,31 @@ export const IntegrationSettingsPage = () => {
                     <Switch
                       isChecked={panelUseNobetci}
                       onChange={(event) => setPanelUseNobetci(event.target.checked)}
+                      isDisabled={panelMutation.isLoading || isPanelLoading}
+                    />
+                  </Flex>
+                </Box>
+                <Box borderWidth="1px" borderRadius="lg" p={4}>
+                  <Flex
+                    justify="space-between"
+                    align={{ base: "flex-start", md: "center" }}
+                    gap={4}
+                    flexDirection={{ base: "column", md: "row" }}
+                  >
+                    <Box>
+                      <Heading size="sm" mb={1}>
+                        {t("settings.panel.accessInsightsTitle", "Enable Access Insights")}
+                      </Heading>
+                      <Text fontSize="sm" color="gray.500">
+                        {t(
+                          "settings.panel.accessInsightsDescription",
+                          "When enabled, Access Insights will load extra geo/ISP data and may consume more memory."
+                        )}
+                      </Text>
+                    </Box>
+                    <Switch
+                      isChecked={panelAccessInsightsEnabled}
+                      onChange={(event) => setPanelAccessInsightsEnabled(event.target.checked)}
                       isDisabled={panelMutation.isLoading || isPanelLoading}
                     />
                   </Flex>
@@ -875,6 +908,7 @@ export const IntegrationSettingsPage = () => {
                     onClick={() =>
                       panelMutation.mutate({
                         use_nobetci: panelUseNobetci,
+                        access_insights_enabled: panelAccessInsightsEnabled,
                         default_subscription_type: panelDefaultSubType,
                       })
                     }
@@ -883,6 +917,7 @@ export const IntegrationSettingsPage = () => {
                       panelMutation.isLoading ||
                       panelData === undefined ||
                       (panelUseNobetci === panelData.use_nobetci &&
+                        panelAccessInsightsEnabled === (panelData.access_insights_enabled ?? false) &&
                         panelDefaultSubType === (panelData.default_subscription_type ?? "key"))
                     }
                   >
@@ -1090,4 +1125,3 @@ export const IntegrationSettingsPage = () => {
     </Box>
   );
 };
-

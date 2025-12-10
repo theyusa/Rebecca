@@ -25,6 +25,7 @@ from app.db.models import Admin as DBAdmin, Node as DBNode, User as DBUser
 from app.utils import report, responses
 from app.utils.jwt import create_admin_token
 from config import LOGIN_NOTIFY_WHITE_LIST
+from app.services import metrics_service
 
 router = APIRouter(tags=["Admin"], prefix="/api", responses={401: responses._401})
 
@@ -211,7 +212,6 @@ def get_admins(
 )
 def disable_admin_account(
     payload: AdminDisablePayload,
-    bg: BackgroundTasks,
     dbadmin: Admin = Depends(get_admin_by_username),
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(Admin.check_sudo_admin),
@@ -229,17 +229,17 @@ def disable_admin_account(
         raise HTTPException(status_code=400, detail="Reason is required")
     reason = reason[:512]
 
-    users_query = db.query(DBUser).filter(DBUser.status.in_((UserStatus.active, UserStatus.on_hold)))
-    if dbadmin:
-        users_query = users_query.filter(DBUser.admin_id == dbadmin.id)
-    users_snapshot = [SimpleNamespace(id=user.id, username=user.username) for user in users_query.all()]
-
-    crud.disable_all_active_users(db=db, admin=dbadmin)
-    for user in users_snapshot:
-        bg.add_task(xray.operations.remove_user, dbuser=user)
-
     previous_state = Admin.model_validate(dbadmin)
+    crud.disable_all_active_users(db=db, admin=dbadmin)
     updated_admin = crud.disable_admin(db, dbadmin, reason)
+
+    # Restart xray with updated config to remove disabled users
+    startup_config = xray.config.include_db_users()
+    xray.core.restart(startup_config)
+    for node_id, node in list(xray.nodes.items()):
+        if node.connected:
+            xray.operations.restart_node(node_id, startup_config)
+
     admin_schema = Admin.model_validate(updated_admin)
     report.admin_updated(admin_schema, current_admin, previous=previous_state)
     return admin_schema
@@ -289,22 +289,19 @@ def enable_admin_account(
 
 @router.post("/admin/{username}/users/disable", responses={403: responses._403, 404: responses._404})
 def disable_all_active_users(
-    bg: BackgroundTasks,
     dbadmin: Admin = Depends(get_admin_by_username),
     db: Session = Depends(get_db),
     admin: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Disable all active users under a specific admin"""
-    users_query = db.query(DBUser).filter(DBUser.status.in_((UserStatus.active, UserStatus.on_hold)))
-    if dbadmin:
-        users_query = users_query.filter(DBUser.admin_id == dbadmin.id)
-
-    users_snapshot = [SimpleNamespace(id=user.id, username=user.username) for user in users_query.all()]
-
     crud.disable_all_active_users(db=db, admin=dbadmin)
 
-    for user in users_snapshot:
-        bg.add_task(xray.operations.remove_user, dbuser=user)
+    # Restart xray with updated config to remove disabled users
+    startup_config = xray.config.include_db_users()
+    xray.core.restart(startup_config)
+    for node_id, node in list(xray.nodes.items()):
+        if node.connected:
+            xray.operations.restart_node(node_id, startup_config)
 
     return {"detail": "Users successfully disabled"}
 
@@ -361,7 +358,7 @@ def get_admin_usage(dbadmin: Admin = Depends(get_admin_by_username), current_adm
     ):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    return dbadmin.users_usage
+    return metrics_service.get_admin_total_usage(dbadmin)
 
 
 @router.get("/admin/{username}/usage/daily", responses={403: responses._403, 404: responses._404})
@@ -381,7 +378,7 @@ def get_admin_usage_daily(
         raise HTTPException(status_code=403, detail="Access denied")
 
     start, end = validate_dates(start, end)
-    usages = crud.get_admin_daily_usages(db, dbadmin, start, end)
+    usages = metrics_service.get_admin_daily_usage(db, dbadmin, start, end)
 
     return {"username": dbadmin.username, "usages": usages}
 
@@ -410,7 +407,7 @@ def get_admin_usage_chart(
     if granularity_value not in {"day", "hour"}:
         raise HTTPException(status_code=400, detail="Invalid granularity. Use 'day' or 'hour'.")
 
-    usages = crud.get_admin_usages_by_day(db, dbadmin, start, end, node_id, granularity_value)
+    usages = metrics_service.get_admin_usage_chart(db, dbadmin, start, end, node_id, granularity_value)
 
     if node_id is not None:
         if node_id == 0:
@@ -450,6 +447,6 @@ def get_admin_usage_by_nodes(
         raise HTTPException(status_code=404, detail="Admin not found")
 
     start, end = validate_dates(start, end)
-    usages = crud.get_admin_usage_by_nodes(db, dbadmin, start, end)
+    usages = metrics_service.get_admin_usage_by_nodes(db, dbadmin, start, end)
 
     return {"usages": usages}

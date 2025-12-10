@@ -77,6 +77,24 @@ export type User = {
   next_plan: NextPlan | null;
 };
 
+export type UserListItem = {
+  username: string;
+  status: Status;
+  used_traffic: number;
+  lifetime_used_traffic: number;
+  created_at: string;
+  expire: number | null;
+  data_limit: number | null;
+  data_limit_reset_strategy: DataLimitResetStrategy | null;
+  online_at?: string | null;
+  service_id: number | null;
+  service_name: string | null;
+  admin_id?: number | null;
+  admin_username?: string | null;
+  subscription_url: string;
+  subscription_urls: Record<string, string>;
+};
+
 export type UserCreate = Pick<
   User,
   | "inbounds"
@@ -134,7 +152,7 @@ export type UseGetUserReturn = {
 }
 
 export type UsersListResponse = {
-  users: User[];
+  users: UserListItem[];
   link_templates?: Record<string, string[]>; // Link templates by protocol
   total: number;
   active_total?: number | null;

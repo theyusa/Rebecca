@@ -195,7 +195,7 @@ def runtime_proxy_settings(
     # Remove persisted flow; flow is now user-scoped
     data.pop("flow", None)
 
-    current_id = data.get("id")
+    current_id = data.get("id") or data.get("uuid")
     sanitized_id = _sanitize_uuid(current_id)
     normalized_key: Optional[str] = None
     if credential_key:

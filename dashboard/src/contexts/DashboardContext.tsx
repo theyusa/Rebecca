@@ -7,6 +7,7 @@ import {
   UserCreate,
   UserCreateWithService,
   UsersListResponse,
+  UserListItem,
 } from "types/User";
 import { queryClient } from "utils/react-query";
 import { getUsersPerPageLimitSize } from "utils/userPreferenceStorage";
@@ -78,7 +79,7 @@ export type Inbounds = Map<ProtocolType, InboundType[]>;
 type DashboardStateType = {
   isCreatingNewUser: boolean;
   editingUser: User | null | undefined;
-  deletingUser: User | null;
+  deletingUser: UserListItem | null;
   version: string | null;
   users: UsersListResponse;
   linkTemplates?: Record<string, string[]>; // Link templates for generating user links
@@ -92,12 +93,12 @@ type DashboardStateType = {
   isResetingAllUsage: boolean;
   lastUsersFetchAt: number | null;
   usersCacheKey: string | null;
-  resetUsageUser: User | null;
-  revokeSubscriptionUser: User | null;
+  resetUsageUser: UserListItem | null;
+  revokeSubscriptionUser: UserListItem | null;
   isEditingCore: boolean;
   onCreateUser: (isOpen: boolean) => void;
-  onEditingUser: (user: User | null) => void;
-  onDeletingUser: (user: User | null) => void;
+  onEditingUser: (user: User | UserListItem | null) => void;
+  onDeletingUser: (user: UserListItem | null) => void;
   onResetAllUsage: (isResetingAllUsage: boolean) => void;
   refetchUsers: (force?: boolean) => void;
   resetAllUsage: () => Promise<void>;
@@ -225,7 +226,16 @@ export const useDashboard = create(
     onResetAllUsage: (isResetingAllUsage) => set({ isResetingAllUsage }),
     onCreateUser: (isCreatingNewUser) => set({ isCreatingNewUser }),
     onEditingUser: (editingUser) => {
-      set({ editingUser });
+      if (!editingUser) {
+        set({ editingUser: null });
+        return;
+      }
+      // Fetch full user detail before opening editor to keep list payload lightweight
+      fetch(`/user/${editingUser.username}`)
+        .then((fullUser: User) => {
+          set({ editingUser: fullUser });
+        })
+        .catch(() => set({ editingUser: null }));
     },
     onDeletingUser: (deletingUser) => {
       set({ deletingUser });
@@ -242,7 +252,7 @@ export const useDashboard = create(
     setQRCode: (QRcodeLinks) => {
       set({ QRcodeLinks });
     },
-    deleteUser: (user: User) => {
+    deleteUser: (user: UserListItem) => {
       set({ editingUser: null });
       return fetch(`/user/${user.username}`, { method: "DELETE" }).then(() => {
         set({ deletingUser: null });
