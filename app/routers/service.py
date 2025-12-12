@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.runtime import xray
 from app.db import GetDB, crud, get_db
 from app.services import metrics_service
+from app.services.data_access import get_inbounds_by_tag_cached
 from app.utils.concurrency import threaded_function
 from app.db.models import Service, User
 from app.dependencies import validate_dates
@@ -71,8 +72,8 @@ def _ensure_service_visibility(service: Service, admin: Admin) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You're not allowed")
 
 
-def _valid_hosts_for_service(service: Service) -> List:
-    inbound_map = xray.config.inbounds_by_tag
+def _valid_hosts_for_service(service: Service, db: Session) -> List:
+    inbound_map = get_inbounds_by_tag_cached(db)
     valid = []
     for link in service.host_links:
         host = link.host
@@ -84,8 +85,8 @@ def _valid_hosts_for_service(service: Service) -> List:
     return valid
 
 
-def _service_to_summary(service: Service, *, user_count: int) -> ServiceBase:
-    valid_hosts = _valid_hosts_for_service(service)
+def _service_to_summary(service: Service, db: Session, *, user_count: int) -> ServiceBase:
+    valid_hosts = _valid_hosts_for_service(service, db)
     host_count = len(valid_hosts)
     return ServiceBase(
         id=service.id,
@@ -102,9 +103,10 @@ def _service_to_summary(service: Service, *, user_count: int) -> ServiceBase:
 
 def _service_to_detail(db: Session, service: Service) -> ServiceDetail:
     hosts: List[ServiceHost] = []
-    valid_hosts = _valid_hosts_for_service(service)
+    inbound_map = get_inbounds_by_tag_cached(db)
+    valid_hosts = _valid_hosts_for_service(service, db)
     for host, link in valid_hosts:
-        inbound_info = xray.config.inbounds_by_tag.get(host.inbound_tag, {})
+        inbound_info = inbound_map.get(host.inbound_tag, {})
         hosts.append(
             ServiceHost(
                 id=host.id,
@@ -169,10 +171,7 @@ def get_services(
     )
     user_counts = data.get("user_counts", {})
     services = [
-        _service_to_summary(
-            service,
-            user_count=int(user_counts.get(service.id, 0)),
-        )
+        _service_to_summary(service, db, user_count=int(user_counts.get(service.id, 0)))
         for service in data["services"]
     ]
     return ServiceListResponse(services=services, total=data["total"])
@@ -200,9 +199,20 @@ def create_service(
 
     if REDIS_ENABLED:
         try:
-            from app.redis.cache import invalidate_service_host_map_cache
+            from app.redis.cache import invalidate_service_host_map_cache, invalidate_inbounds_cache
+            from app.reb_node.state import rebuild_service_hosts_cache
+            from app.redis.cache import cache_service_host_map
 
+            # Invalidate and rebuild cache
             invalidate_service_host_map_cache()
+            invalidate_inbounds_cache()
+            rebuild_service_hosts_cache()
+            # Re-cache all service host maps
+            from app.reb_node import state as xray_state
+            for service_id in xray_state.service_hosts_cache.keys():
+                host_map = xray_state.service_hosts_cache.get(service_id)
+                if host_map:
+                    cache_service_host_map(service_id, host_map)
         except Exception:
             pass  # Don't fail if Redis is unavailable
 
@@ -260,9 +270,20 @@ def modify_service(
 
         if REDIS_ENABLED:
             try:
-                from app.redis.cache import invalidate_service_host_map_cache
+                from app.redis.cache import invalidate_service_host_map_cache, invalidate_inbounds_cache
+                from app.reb_node.state import rebuild_service_hosts_cache
+                from app.redis.cache import cache_service_host_map
 
+                # Invalidate and rebuild cache
                 invalidate_service_host_map_cache()
+                invalidate_inbounds_cache()
+                rebuild_service_hosts_cache()
+                # Re-cache all service host maps
+                from app.reb_node import state as xray_state
+                for service_id in xray_state.service_hosts_cache.keys():
+                    host_map = xray_state.service_hosts_cache.get(service_id)
+                    if host_map:
+                        cache_service_host_map(service_id, host_map)
             except Exception:
                 pass  # Don't fail if Redis is unavailable
 
@@ -312,9 +333,20 @@ def delete_service(
 
     if REDIS_ENABLED:
         try:
-            from app.redis.cache import invalidate_service_host_map_cache
+            from app.redis.cache import invalidate_service_host_map_cache, invalidate_inbounds_cache
+            from app.reb_node.state import rebuild_service_hosts_cache
+            from app.redis.cache import cache_service_host_map
 
+            # Invalidate and rebuild cache
             invalidate_service_host_map_cache()
+            invalidate_inbounds_cache()
+            rebuild_service_hosts_cache()
+            # Re-cache all service host maps
+            from app.reb_node import state as xray_state
+            for service_id in xray_state.service_hosts_cache.keys():
+                host_map = xray_state.service_hosts_cache.get(service_id)
+                if host_map:
+                    cache_service_host_map(service_id, host_map)
         except Exception:
             pass  # Don't fail if Redis is unavailable
 

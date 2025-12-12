@@ -311,18 +311,29 @@ const sortHosts = (hosts: HostState[]) =>
 
 const mapHostsToState = (hosts: HostsSchema): HostState[] => {
 	const result: HostState[] = [];
+	if (!hosts || typeof hosts !== "object") {
+		return result;
+	}
 	Object.entries(hosts).forEach(([tag, hostList]) => {
+		if (!Array.isArray(hostList)) {
+			console.warn(`Host list for tag ${tag} is not an array:`, hostList);
+			return;
+		}
 		hostList.forEach((host, index) => {
-			const normalized = normalizeHostData(host, index);
-			const persistentUid =
-				normalized.id != null ? `host-${normalized.id}` : createUid();
-			result.push({
-				uid: persistentUid,
-				inboundTag: tag,
-				initialInboundTag: tag,
-				data: cloneHostData(normalized),
-				original: cloneHostData(normalized),
-			});
+			try {
+				const normalized = normalizeHostData(host, index);
+				const persistentUid =
+					normalized.id != null ? `host-${normalized.id}` : createUid();
+				result.push({
+					uid: persistentUid,
+					inboundTag: tag,
+					initialInboundTag: tag,
+					data: cloneHostData(normalized),
+					original: cloneHostData(normalized),
+				});
+			} catch (error) {
+				console.error(`Failed to normalize host at index ${index} for tag ${tag}:`, error, host);
+			}
 		});
 	});
 	return sortHosts(result);
@@ -1251,8 +1262,13 @@ export const HostsManager: FC = () => {
 	}, [inbounds]);
 
 	useEffect(() => {
-		const mapped = mapHostsToState(hosts);
-		applyHostItems(mapped);
+		try {
+			const mapped = mapHostsToState(hosts);
+			applyHostItems(mapped);
+		} catch (error) {
+			console.error("Failed to map hosts to state:", error, hosts);
+			applyHostItems([]);
+		}
 	}, [hosts, applyHostItems]);
 
 	useEffect(() => {

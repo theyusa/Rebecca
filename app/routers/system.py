@@ -685,6 +685,15 @@ def delete_inbound(
             }
             cache_inbounds(inbounds_dict)
             invalidate_service_host_map_cache()
+            from app.reb_node.state import rebuild_service_hosts_cache
+            from app.redis.cache import cache_service_host_map
+            from app.reb_node import state as xray_state
+            
+            rebuild_service_hosts_cache()
+            for service_id in xray_state.service_hosts_cache.keys():
+                host_map = xray_state.service_hosts_cache.get(service_id)
+                if host_map:
+                    cache_service_host_map(service_id, host_map)
         except Exception:
             pass  # Don't fail if Redis is unavailable
 
@@ -697,8 +706,24 @@ def delete_inbound(
 @router.get("/hosts", response_model=Dict[str, List[ProxyHost]], responses={403: responses._403})
 def get_hosts(db: Session = Depends(get_db), admin: Admin = Depends(Admin.check_sudo_admin)):
     """Get a list of proxy hosts grouped by inbound tag."""
-    hosts = {tag: crud.get_hosts(db, tag) for tag in xray.config.inbounds_by_tag}
-    return hosts
+    from app.services.data_access import get_inbounds_by_tag_cached
+    
+    inbound_map = get_inbounds_by_tag_cached(db)
+    if not inbound_map:
+        inbound_map = xray.config.inbounds_by_tag
+    
+    hosts_dict = {}
+    for tag in inbound_map:
+        try:
+            db_hosts = crud.get_hosts(db, tag)
+            hosts_dict[tag] = [ProxyHost.model_validate(host) for host in db_hosts]
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to get hosts for tag {tag}: {e}", exc_info=True)
+            hosts_dict[tag] = []
+    
+    return hosts_dict
 
 
 @router.put("/hosts", response_model=Dict[str, List[ProxyHost]], responses={403: responses._403})
@@ -729,6 +754,25 @@ def modify_hosts(
                 users_to_refresh[user.id] = user
 
     xray.hosts.update()
+
+    from config import REDIS_ENABLED
+
+    if REDIS_ENABLED:
+        try:
+            from app.redis.cache import invalidate_service_host_map_cache, invalidate_inbounds_cache
+            from app.reb_node.state import rebuild_service_hosts_cache
+            from app.redis.cache import cache_service_host_map
+
+            invalidate_service_host_map_cache()
+            invalidate_inbounds_cache()
+            rebuild_service_hosts_cache()
+            from app.reb_node import state as xray_state
+            for service_id in xray_state.service_hosts_cache.keys():
+                host_map = xray_state.service_hosts_cache.get(service_id)
+                if host_map:
+                    cache_service_host_map(service_id, host_map)
+        except Exception:
+            pass 
 
     for user in users_to_refresh.values():
         bg.add_task(xray.operations.update_user, dbuser=user)

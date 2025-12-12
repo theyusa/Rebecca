@@ -385,7 +385,7 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 									label={t("nodes.dataLimitField", "Data Limit (GB)")}
 									size="sm"
 									type="number"
-									step={0.01}
+									step="any"
 									min={0}
 									placeholder={t(
 										"nodes.dataLimitPlaceholder",

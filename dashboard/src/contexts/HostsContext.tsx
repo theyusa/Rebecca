@@ -39,7 +39,14 @@ export const useHosts = create<HostsStore>((set) => ({
 	fetchHosts: () => {
 		set({ isLoading: true });
 		fetch("/hosts")
-			.then((hosts) => set({ hosts }))
+			.then((hosts) => {
+				// Ensure hosts is always an object, even if API returns null/undefined
+				set({ hosts: hosts || {} });
+			})
+			.catch((error) => {
+				console.error("Failed to fetch hosts:", error);
+				set({ hosts: {} });
+			})
 			.finally(() => set({ isLoading: false }));
 	},
 	setHosts: (body) => {

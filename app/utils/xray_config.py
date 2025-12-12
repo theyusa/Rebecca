@@ -26,6 +26,9 @@ def restart_xray_and_invalidate_cache(startup_config=None):
     if REDIS_ENABLED:
         try:
             from app.redis.cache import cache_inbounds, invalidate_service_host_map_cache
+            from app.reb_node.state import rebuild_service_hosts_cache
+            from app.redis.cache import cache_service_host_map
+            from app.reb_node import state as xray_state
 
             inbounds_dict = {
                 "inbounds_by_tag": {tag: inbound for tag, inbound in xray.config.inbounds_by_tag.items()},
@@ -33,6 +36,11 @@ def restart_xray_and_invalidate_cache(startup_config=None):
             }
             cache_inbounds(inbounds_dict)
             invalidate_service_host_map_cache()
+            rebuild_service_hosts_cache()
+            for service_id in xray_state.service_hosts_cache.keys():
+                host_map = xray_state.service_hosts_cache.get(service_id)
+                if host_map:
+                    cache_service_host_map(service_id, host_map)
         except Exception:
             pass  # Don't fail if Redis is unavailable
 
@@ -108,6 +116,9 @@ def soft_reload_panel():
     if REDIS_ENABLED:
         try:
             from app.redis.cache import cache_inbounds, invalidate_service_host_map_cache
+            from app.reb_node.state import rebuild_service_hosts_cache
+            from app.redis.cache import cache_service_host_map
+            from app.reb_node import state as xray_state
 
             inbounds_dict = {
                 "inbounds_by_tag": {tag: inbound for tag, inbound in xray.config.inbounds_by_tag.items()},
@@ -115,6 +126,11 @@ def soft_reload_panel():
             }
             cache_inbounds(inbounds_dict)
             invalidate_service_host_map_cache()
+            rebuild_service_hosts_cache()
+            for service_id in xray_state.service_hosts_cache.keys():
+                host_map = xray_state.service_hosts_cache.get(service_id)
+                if host_map:
+                    cache_service_host_map(service_id, host_map)
         except Exception:
             pass  # Don't fail if Redis is unavailable
 

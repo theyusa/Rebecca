@@ -82,3 +82,22 @@ def get_service_host_map_cached(service_id: Optional[int], force_refresh: bool =
             pass  # Don't fail if caching fails
 
     return host_map
+
+
+def get_inbounds_by_tag_cached(db: Session, force_refresh: bool = False) -> Dict[str, Any]:
+    """
+    Return inbounds_by_tag dictionary.
+    Uses Redis cache if available, otherwise falls back to xray.config.
+
+    Args:
+        db: Database session
+        force_refresh: If True, force refresh from DB even if cache exists
+    """
+    if REDIS_ENABLED and not force_refresh:
+        cached_inbounds = get_cached_inbounds()
+        if cached_inbounds:
+            return cached_inbounds.get("inbounds_by_tag", {})
+
+    # Fallback to xray.config
+    from app.runtime import xray
+    return xray.config.inbounds_by_tag

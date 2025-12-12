@@ -169,13 +169,21 @@ class ProxyHost(BaseModel):
     alpn: ProxyHostALPN = ProxyHostALPN.none
     fingerprint: ProxyHostFingerprint = ProxyHostFingerprint.none
     allowinsecure: Union[bool, None] = None
-    is_disabled: Union[bool, None] = None
+    is_disabled: bool = Field(default=False)
     mux_enable: Union[bool, None] = None
     fragment_setting: Optional[str] = Field(default=None, json_schema_extra={"nullable": True})
     noise_setting: Optional[str] = Field(default=None, json_schema_extra={"nullable": True})
     random_user_agent: Union[bool, None] = None
     use_sni_as_host: Union[bool, None] = None
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+    
+    @field_validator("is_disabled", mode="before")
+    @classmethod
+    def normalize_is_disabled(cls, v):
+        """Normalize is_disabled to always be a boolean, never None."""
+        if v is None:
+            return False
+        return bool(v)
 
     @field_validator("remark", mode="after")
     def validate_remark(cls, v):

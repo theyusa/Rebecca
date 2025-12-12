@@ -257,18 +257,30 @@ def process_inbounds_and_tags(
 
     service_id = extra_data.get("service_id")
 
-    xray_config = None
-    try:
-        with GetDB() as db:
-            raw_config = crud.get_xray_config(db)
-            xray_config = XRayConfig(raw_config, api_port=xray.config.api_port)
-    except Exception:
-        xray_config = getattr(xray, "config", None)
+    from app.services.data_access import get_inbounds_by_tag_cached
+    from config import REDIS_ENABLED
+    
+    inbounds_by_tag = {}
+    if REDIS_ENABLED:
+        try:
+            with GetDB() as db:
+                inbounds_by_tag = get_inbounds_by_tag_cached(db)
+        except Exception:
+            pass
+    
+    if not inbounds_by_tag:
+        xray_config = None
+        try:
+            with GetDB() as db:
+                raw_config = crud.get_xray_config(db)
+                xray_config = XRayConfig(raw_config, api_port=xray.config.api_port)
+        except Exception:
+            xray_config = getattr(xray, "config", None)
 
-    if not xray_config:
-        return [] if isinstance(conf, list) else ""
+        if not xray_config:
+            return [] if isinstance(conf, list) else ""
 
-    inbounds_by_tag = getattr(xray_config, "inbounds_by_tag", {}) or {}
+        inbounds_by_tag = getattr(xray_config, "inbounds_by_tag", {}) or {}
 
     host_map = {}
     if not os.getenv("PYTEST_CURRENT_TEST") and os.getenv("REBECCA_SKIP_RUNTIME_INIT") != "1":

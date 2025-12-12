@@ -39,7 +39,23 @@ export const NodeSchema = z.object({
 	message: z.string().nullable().optional(),
 	add_as_new_host: z.boolean().optional(),
 	usage_coefficient: z.number().or(z.string().transform((v) => parseFloat(v))),
-	data_limit: z.number().nullable().optional(),
+	data_limit: z
+		.number()
+		.nullable()
+		.optional()
+		.or(
+			z
+				.string()
+				.transform((v) => {
+					if (v === "" || v === null || v === undefined) {
+						return null;
+					}
+					const parsed = parseFloat(v);
+					return Number.isFinite(parsed) ? parsed : null;
+				})
+				.nullable()
+				.optional(),
+		),
 	uplink: z.number().nullable().optional(),
 	downlink: z.number().nullable().optional(),
 	use_nobetci: z.boolean().optional(),

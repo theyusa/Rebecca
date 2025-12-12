@@ -325,15 +325,15 @@ class ProxyHost(Base):
         Enum(ProxyHostALPN),
         unique=False,
         nullable=False,
-        default=ProxyHostSecurity.none,
-        server_default=ProxyHostSecurity.none.name,
+        default=ProxyHostALPN.none,
+        server_default=ProxyHostALPN.none.name,
     )
     fingerprint = Column(
         Enum(ProxyHostFingerprint),
         unique=False,
         nullable=False,
-        default=ProxyHostSecurity.none,
-        server_default=ProxyHostSecurity.none.name,
+        default=ProxyHostFingerprint.none,
+        server_default=ProxyHostFingerprint.none.name,
     )
 
     inbound_tag = Column(String(256), ForeignKey("inbounds.tag"), nullable=False)
