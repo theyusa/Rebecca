@@ -168,3 +168,6 @@ xray-core
 
 # Redis backup files
 data/redis_backup/
+
+# Dashboard build directory (built by Docker)
+dashboard/build/
