@@ -366,6 +366,9 @@
 	"hostsPage.untitledHost": "Untitled host",
 	"IP": "IP",
 	"inbound": "Inbound",
+	"inbounds.tls.certPath": "Certificate File Path",
+	"inbounds.tls.keyPath": "Key File Path",
+	"inbounds.tls.fingerprint": "uTLS Fingerprint"
 	"inbounds.accounts.add": "Add account",
 	"inbounds.accounts.label": "Account",
 	"inbounds.add": "Add inbound",
