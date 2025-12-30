@@ -102,8 +102,6 @@ export type InboundFormValues = {
 	tlsAllowInsecure: boolean;
 	tlsFingerprint: string;
 	tlsRawSettings: Record<string, any>;
-	tlsCertPath: string;
-    tlsKeyPath: string;
 
 	// REALITY
 	realityPrivateKey: string;
@@ -873,6 +871,23 @@ const buildStreamSettings = (
 		tlsPayload.allowInsecure = values.tlsAllowInsecure;
 		tlsPayload.fingerprint = values.tlsFingerprint || undefined;
 		stream.tlsSettings = cleanObject(tlsPayload);
+	}
+	if (values.streamSecurity === "tls") {
+		streamSettings.tlsSettings = {
+			serverName: values.tlsServerName,
+			rejectUnknownSni: false,
+			fingerprint: values.tlsFingerprint || undefined,
+			certificates: (values.tlsCertPath && values.tlsKeyPath) ? [
+				{
+					certificateFile: values.tlsCertPath,
+					keyFile: values.tlsKeyPath,
+				}
+			] : undefined,
+		};
+
+		if (values.tlsAlpn.length > 0) {
+			streamSettings.tlsSettings.alpn = values.tlsAlpn;
+		}
 	}
 
 	if (values.streamSecurity === "reality") {
