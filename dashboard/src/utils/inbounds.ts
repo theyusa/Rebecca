@@ -102,6 +102,8 @@ export type InboundFormValues = {
 	tlsAllowInsecure: boolean;
 	tlsFingerprint: string;
 	tlsRawSettings: Record<string, any>;
+	tlsCertPath: string;
+    tlsKeyPath: string;
 
 	// REALITY
 	realityPrivateKey: string;
