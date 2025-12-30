@@ -49,6 +49,7 @@ export const Language: FC<HeaderProps> = ({ actions }) => {
 		{ code: "fa", label: "پارسی", flag: "IR" },
 		{ code: "zh-cn", label: "中文", flag: "CN" },
 		{ code: "ru", label: "Русский", flag: "RU" },
+		{ code: "tr", label: "Türkçe", flag: "TR" },
 	];
 
 	return (
