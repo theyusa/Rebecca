@@ -464,7 +464,7 @@
 	"inbounds.tls.serverName": "Sunucu adı (SNI)",
 	"inbounds.tls.certPath": "Sertifika Dosya Yolu (Public)",
 	"inbounds.tls.keyPath": "Anahtar Dosya Yolu (Private)",
-	"inbounds.tls.fingerprint": "uTLS Parmak İzi"
+	"inbounds.tls.fingerprint": "uTLS Parmak İzi",
 	"inbounds.vless.authNotFound": "Authentication bloğu bulunamadı",
 	"inbounds.vless.authPlaceholder": "Kimlik doğrulamayı seçin",
 	"inbounds.vless.authentication": "Kimlik Doğrulama",
