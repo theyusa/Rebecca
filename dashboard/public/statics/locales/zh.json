@@ -1,6 +1,10 @@
 {
 	"translatedbyai": "Translated by AI",
 	",": ",",
+	"inbounds.tls.certPath": "证书文件路径 (Public)",
+	"inbounds.tls.keyPath": "密钥文件路径 (Private)",
+	"inbounds.tls.fingerprint": "uTLS 指纹",
+	
 	"DNS": "DNS",
 	"UsersUsage": "您的用量",
 	"actions": "Actions",
