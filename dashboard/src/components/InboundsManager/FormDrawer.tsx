@@ -1592,6 +1592,16 @@ export const InboundFormModal: FC<Props> = ({
 										))}
 									</Select>
 								</FormControl>
+								<SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+    <FormControl>
+        <FormLabel>{t("inbounds.tls.certPath", "Certificate Path")}</FormLabel>
+        <Input {...register("tlsCertPath")} placeholder="/var/lib/rebecca/certs/example.com/fullchain.pem" />
+    </FormControl>
+    <FormControl>
+        <FormLabel>{t("inbounds.tls.keyPath", "Key Path")}</FormLabel>
+        <Input {...register("tlsKeyPath")} placeholder="/var/lib/rebecca/certs/example.com/privkey.pem" />
+    </FormControl>
+</SimpleGrid>
 								<FormControl display="flex" alignItems="center">
 									<FormLabel mb={0}>
 										{t("inbounds.tls.allowInsecure", "Allow insecure")}
