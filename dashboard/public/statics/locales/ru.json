@@ -1,6 +1,10 @@
 {
 	"translatedbyai": "Translated by AI",
 	",": ",",
+	"inbounds.tls.certPath": "Путь к сертификату (Public)",
+	"inbounds.tls.keyPath": "Путь к ключу (Private)",
+	"inbounds.tls.fingerprint": "uTLS отпечаток",
+	
 	"DNS": "DNS",
 	"UsersUsage": "Ваше использование",
 	"actions": "Actions",
