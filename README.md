@@ -1,7 +1,7 @@
 <p align="center">
   <a href="https://github.com/rebeccapanel/Rebecca" target="_blank" rel="noopener noreferrer">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://github.com/xmohammad1/Rebecca-docs/raw/master/screenshots/logo-dark.png">
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/theyusa/Rebecca/refs/heads/master/dashboard/src/assets/logo.svg">
       <img width="160" height="160" src="https://raw.githubusercontent.com/theyusa/Rebecca/refs/heads/master/dashboard/src/assets/logo.svg">
     </picture>
   </a>
