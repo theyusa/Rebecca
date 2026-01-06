@@ -105,7 +105,7 @@ Rebecca is user-friendly, feature-rich and reliable. It lets you create differen
 Run the following command to install Rebecca with SQLite database:
 
 ```bash
-sudo bash -c "$(curl -sL https://github.com/rebeccapanel/Rebecca-scripts/raw/master/rebecca.sh)" @ install
+sudo bash -c "$(curl -sL https://github.com/TheYusa/Rebecca-scripts/raw/master/rebecca.sh)" @ install
 ```
 
 Run the following command to install Rebecca with MySQL database:
